@@ -50,6 +50,20 @@ pub struct DocIndex {
 pub struct OpenParams {
     /// Path beneath the configured automation read root: relative (forward slashes) or absolute.
     pub path: String,
+    /// DDS only: open the texture's alpha as an "Alpha 1" document channel rather than the
+    /// layer's transparency, for files that carry data such as specular maps in alpha.
+    #[serde(default, rename = "ddsAlphaChannel")]
+    pub dds_alpha_channel: Option<bool>,
+    /// DDS only: open every mip level as a layer instead of the top level only.
+    #[serde(default, rename = "ddsMipmaps")]
+    pub dds_mipmaps: Option<bool>,
+    /// DDS only: open the rows bottom-up (textures written for the opposite GL/D3D origin).
+    #[serde(default, rename = "ddsFlip")]
+    pub dds_flip: Option<bool>,
+    /// DDS only: how a cubemap opens — "layers" (a layer per face, the default), "cross"
+    /// (the 4:3 cross-layout sheet) or "off" (the +X face as a plain texture).
+    #[serde(default, rename = "ddsCube")]
+    pub dds_cube: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -184,13 +198,50 @@ pub struct SaveParams {
     /// DPX: 8, 10, 12 or 16 bits per sample. Unset: 8 for an 8-bit document, else 16.
     #[serde(default, rename = "dpxBits")]
     pub dpx_bits: Option<u8>,
-    /// DDS: "none" (uncompressed, the default), "bc1" (DXT1: alpha on or off), "bc2" (DXT3) or
-    /// "bc3" (DXT5).
+    /// DDS: "none" (uncompressed), "bc1" (DXT1: alpha on or off), "bc1a" (DXT1a), "bc2" (DXT3),
+    /// "bc3" (DXT5), "bc4" (ATI1), "bc5" (ATI2), "bc7" or "a8" (alpha only). Unset: what the
+    /// file was written with, when writable.
     #[serde(default, rename = "ddsCompression")]
     pub dds_compression: Option<String>,
-    /// DDS: also write the full mip chain, each level a box filter of the one above.
+    /// DDS: also write the mip chain.
     #[serde(default, rename = "ddsMipmaps")]
-    pub dds_mipmaps: bool,
+    pub dds_mipmaps: Option<bool>,
+    /// DDS: the BC7 encoder's effort, "highest" (the default), "production", "normal" or "fastest".
+    #[serde(default, rename = "ddsQuality")]
+    pub dds_quality: Option<String>,
+    /// DDS: tag the texture sRGB (written with the DX10 header).
+    #[serde(default, rename = "ddsSrgb")]
+    pub dds_srgb: Option<bool>,
+    /// DDS: the mip downsample filter, "box" (the default), "triangle", "min", "max", "kaiser"
+    /// or "mitchell".
+    #[serde(default, rename = "ddsMipFilter")]
+    pub dds_mip_filter: Option<String>,
+    /// DDS: stop the mip chain before a level whose smaller side falls below this.
+    #[serde(default, rename = "ddsMinMipSize")]
+    pub dds_min_mip_size: Option<u32>,
+    /// DDS: cap the mip chain at this many levels; 0 = no cap.
+    #[serde(default, rename = "ddsMaxMipCount")]
+    pub dds_max_mip_count: Option<u32>,
+    /// DDS: filter sRGB mips in linear light (default true).
+    #[serde(default, rename = "ddsMipGammaCorrect")]
+    pub dds_mip_gamma_correct: Option<bool>,
+    /// DDS: filter mips in premultiplied space so transparent texels don't bleed (default true).
+    #[serde(default, rename = "ddsMipPremultAlpha")]
+    pub dds_mip_premult_alpha: Option<bool>,
+    /// DDS: store premultiplied alpha.
+    #[serde(default, rename = "ddsPremultAlpha")]
+    pub dds_premult_alpha: Option<bool>,
+    /// DDS: set the normal-map header flag (DDPF_NORMAL).
+    #[serde(default, rename = "ddsNormalMap")]
+    pub dds_normal_map: Option<bool>,
+    /// DDS: write the rows bottom-up.
+    #[serde(default, rename = "ddsFlip")]
+    pub dds_flip: Option<bool>,
+    /// DDS: write a cubemap — "layers" takes the document's six bottom pixel layers as the
+    /// +X -X +Y -Y +Z -Z faces on a square canvas, "cross" splits a 4:3 cross-layout sheet;
+    /// "off" (the default) is a plain texture.
+    #[serde(default, rename = "ddsCube")]
+    pub dds_cube: Option<String>,
     #[serde(default)]
     pub index: Option<usize>,
 }
@@ -620,16 +671,49 @@ impl PhotocraftMcp {
         to_result(b.call_read("ui.inspect", json!({})).await)
     }
 
-    #[tool(description = "Open an image or document file and make it active. Returns index, size and import warnings.")]
+    #[tool(
+        description = "Open an image or document file and make it active. Returns index, size and import warnings. DDS only: `ddsAlphaChannel` opens the texture's alpha as an \"Alpha 1\" document channel instead of the layer's transparency (specular-in-alpha textures), `ddsMipmaps` opens every mip level as a layer, `ddsFlip` opens the rows bottom-up, `ddsCube` opens a cubemap as a layer per face (the default), the 4:3 cross-layout sheet (`cross`) or the +X face only (`off`)."
+    )]
     async fn doc_open(&self, Parameters(p): Parameters<OpenParams>) -> Result<CallToolResult, McpError> {
+        let mut opts = photocraft_io::ImportOptions::default();
+        if let Some(a) = p.dds_alpha_channel {
+            opts.dds.alpha_as_channel = a;
+        }
+        if let Some(m) = p.dds_mipmaps {
+            opts.dds.mips_as_layers = m;
+        }
+        if let Some(f) = p.dds_flip {
+            opts.dds.flip = f;
+        }
+        let cube = match p.dds_cube.as_deref().map(|c| (c, photocraft_io::DdsCubeMap::from_name(c))) {
+            None => None,
+            Some((_, Some(c))) => Some(c),
+            Some((c, None)) => return Ok(fail(format!("`ddsCube` must be off, layers or cross, got {c:?}"))),
+        };
+        if let Some(c) = cube {
+            opts.dds.cube = c;
+        }
         let path = PathBuf::from(&p.path);
-        if let Some(r) = self.headless_op(move |h| h.open(&path)).await {
+        if let Some(r) = self.headless_op(move |h| h.open_opts(&path, &opts)).await {
             return to_result(r);
         }
         let Some(b) = self.bridge_client() else {
             return Ok(no_backend());
         };
-        to_result(b.call("app.open", json!({"path": p.path})).await)
+        let mut params = json!({"path": p.path});
+        if let Some(a) = p.dds_alpha_channel {
+            params["ddsAlphaChannel"] = json!(a);
+        }
+        if let Some(m) = p.dds_mipmaps {
+            params["ddsMipmaps"] = json!(m);
+        }
+        if let Some(f) = p.dds_flip {
+            params["ddsFlip"] = json!(f);
+        }
+        if let Some(c) = cube {
+            params["ddsCube"] = json!(c.name());
+        }
+        to_result(b.call("app.open", params).await)
     }
 
     #[tool(
@@ -1060,8 +1144,83 @@ impl PhotocraftMcp {
         let dds_compression = match p.dds_compression.as_deref().map(|c| (c, photocraft_io::DdsCompression::from_name(c))) {
             None => None,
             Some((_, Some(c))) => Some(c),
-            Some((c, None)) => return Ok(fail(format!("`ddsCompression` must be none, bc1, bc2 or bc3, got {c:?}"))),
+            Some((c, None)) => return Ok(fail(format!("`ddsCompression` must be none, bc1, bc1a, bc2, bc3, bc4, bc5, bc7 or a8, got {c:?}"))),
         };
+        let dds_quality = match p.dds_quality.as_deref().map(|q| (q, photocraft_io::DdsQuality::from_name(q))) {
+            None => None,
+            Some((_, Some(q))) => Some(q),
+            Some((q, None)) => return Ok(fail(format!("`ddsQuality` must be fastest, normal, production or highest, got {q:?}"))),
+        };
+        let dds_mip_filter = match p.dds_mip_filter.as_deref().map(|f| (f, photocraft_io::DdsMipFilter::from_name(f))) {
+            None => None,
+            Some((_, Some(f))) => Some(f),
+            Some((f, None)) => return Ok(fail(format!("`ddsMipFilter` must be box, triangle, min, max, kaiser or mitchell, got {f:?}"))),
+        };
+        let dds_cube = match p.dds_cube.as_deref().map(|c| (c, photocraft_io::DdsCubeMap::from_name(c))) {
+            None => None,
+            Some((_, Some(c))) => Some(c),
+            Some((c, None)) => return Ok(fail(format!("`ddsCube` must be off, layers or cross, got {c:?}"))),
+        };
+        if let Some(n) = p.dds_min_mip_size.filter(|n| *n == 0) {
+            return Ok(fail(format!("`ddsMinMipSize` must be 1 or more, got {n}")));
+        }
+        // The DDS choices the call asked for, as engine params for the bridge and a
+        // `DdsOptions` for headless; `None` when none were given (the file's own encoding
+        // then decides, in both modes).
+        let dds_json = |params: &mut serde_json::Map<String, Value>| {
+            if let Some(c) = dds_compression {
+                params.insert("ddsCompression".into(), json!(c.name()));
+            }
+            if let Some(m) = p.dds_mipmaps {
+                params.insert("ddsMipmaps".into(), json!(m));
+            }
+            if let Some(q) = dds_quality {
+                params.insert("ddsQuality".into(), json!(q.name()));
+            }
+            if let Some(s) = p.dds_srgb {
+                params.insert("ddsSrgb".into(), json!(s));
+            }
+            if let Some(f) = dds_mip_filter {
+                params.insert("ddsMipFilter".into(), json!(f.name()));
+            }
+            if let Some(n) = p.dds_min_mip_size {
+                params.insert("ddsMinMipSize".into(), json!(n));
+            }
+            if let Some(n) = p.dds_max_mip_count {
+                params.insert("ddsMaxMipCount".into(), json!(n));
+            }
+            if let Some(b) = p.dds_mip_gamma_correct {
+                params.insert("ddsMipGammaCorrect".into(), json!(b));
+            }
+            if let Some(b) = p.dds_mip_premult_alpha {
+                params.insert("ddsMipPremultAlpha".into(), json!(b));
+            }
+            if let Some(b) = p.dds_premult_alpha {
+                params.insert("ddsPremultAlpha".into(), json!(b));
+            }
+            if let Some(b) = p.dds_normal_map {
+                params.insert("ddsNormalMap".into(), json!(b));
+            }
+            if let Some(b) = p.dds_flip {
+                params.insert("ddsFlip".into(), json!(b));
+            }
+            if let Some(c) = dds_cube {
+                params.insert("ddsCube".into(), json!(c.name()));
+            }
+        };
+        let any_dds = dds_compression.is_some()
+            || p.dds_mipmaps.is_some()
+            || dds_quality.is_some()
+            || p.dds_srgb.is_some()
+            || dds_mip_filter.is_some()
+            || p.dds_min_mip_size.is_some()
+            || p.dds_max_mip_count.is_some()
+            || p.dds_mip_gamma_correct.is_some()
+            || p.dds_mip_premult_alpha.is_some()
+            || p.dds_premult_alpha.is_some()
+            || p.dds_normal_map.is_some()
+            || p.dds_flip.is_some()
+            || dds_cube.is_some();
         if let Some(b) = self.bridge_client() {
             // The bridge forwards to the running app's `app.save`, which takes only an optional
             // path (without one it writes back to the document's own layered file, as headless
@@ -1080,26 +1239,36 @@ impl PhotocraftMcp {
             if !unsupported.is_empty() {
                 return Ok(fail(format!("bridge mode saves with the app's current settings; `{}` need headless mode", unsupported.join("`, `"))));
             }
-            let mut params = json!({});
+            let mut params = serde_json::Map::new();
             if let Some(path) = p.path {
-                params["path"] = json!(path);
+                params.insert("path".into(), json!(path));
             }
             if let Some(bits) = tga_bits {
-                params["tgaBits"] = json!(bits.bits());
+                params.insert("tgaBits".into(), json!(bits.bits()));
             }
-            if let Some(c) = dds_compression {
-                params["ddsCompression"] = json!(c.name());
-            }
-            if p.dds_mipmaps {
-                params["ddsMipmaps"] = json!(true);
-            }
-            return to_result(b.call("app.save", params).await);
+            dds_json(&mut params);
+            return to_result(b.call("app.save", Value::Object(params)).await);
         }
         let Some(r) = self
             .headless_op(move |h| {
                 let mut opts = photocraft_io::ExportOptions { tiff_layers: p.tiff_layers, tga_bits, ..Default::default() };
                 opts.encode.dpx_bits = dpx_bits;
-                opts.encode.dds = photocraft_io::DdsOptions { compression: dds_compression.unwrap_or_default(), mipmaps: p.dds_mipmaps };
+                // `None` writes what the file was opened with, matching engine saves.
+                opts.dds = any_dds.then(|| photocraft_io::DdsOptions {
+                    compression: dds_compression.unwrap_or_default(),
+                    mipmaps: p.dds_mipmaps.unwrap_or_default(),
+                    quality: dds_quality.unwrap_or_default(),
+                    srgb: p.dds_srgb.unwrap_or_default(),
+                    mip_filter: dds_mip_filter.unwrap_or_default(),
+                    min_mip_size: p.dds_min_mip_size.unwrap_or(1),
+                    max_mip_count: p.dds_max_mip_count.unwrap_or_default(),
+                    mip_gamma_correct: p.dds_mip_gamma_correct.unwrap_or(true),
+                    mip_premult_alpha: p.dds_mip_premult_alpha.unwrap_or(true),
+                    export_premult_alpha: p.dds_premult_alpha.unwrap_or_default(),
+                    normal_map: p.dds_normal_map.unwrap_or_default(),
+                    flip: p.dds_flip.unwrap_or_default(),
+                    cube: dds_cube.unwrap_or_default(),
+                });
                 if let Some(q) = p.quality {
                     opts.encode.jpeg_quality = q;
                     opts.encode.webp_quality = q;

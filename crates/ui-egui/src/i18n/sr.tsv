@@ -3206,6 +3206,7 @@ layerLabel	No Color	Bez boje
 	File Name	Ime datoteke
 	File Format	Format datoteke
 	Compression	Kompresija
+	A8 / alpha only	A8 / samo alfa
 	Artboards	Radne table
 	Snap to Grid	Prianjaj uz mrežu
 	Full Screen	Ceo ekran
@@ -4433,6 +4434,39 @@ shape	Appearance	Izgled
 # DDS Options (#1327)
 	DDS Options	DDS opcije
 	Generate Mipmaps	Generiši mipmape
+	Box	Pravougaoni
+	Min	Min.
+	Max	Maks.
+	Kaiser	Kajzer
+	Mitchell-Netravali	Mičel-Netravali
+	Fastest	Najbrže
+	Production	Produkcija
+	Highest	Najviše
+	Filter in linear light	Filtriraj u linearnom svetlu
+	Filter premultiplied (no alpha bleed)	Premnoženi filter (bez curenja alfe)
+	Premultiplied alpha	Premnožena alfa
+	Normal map	Mapa normala
+	Flip vertically	Obrni vertikalno
+	Stop at	Ne manje od
+	px; at most	px; najviše
+	levels	nivoa
+
+	Cubemap	Kubna mapa
+	Faces from layers	Strane iz slojeva
+
+# DDS Import (#8632)
+	DDS Import	Uvoz DDS
+	Load transparency as alpha channel	Učitaj providnost kao alfa kanal
+	Mipmaps as separate layers	Mipmape kao zasebni slojevi
+	Open cancelled	Otvaranje otkazano
+	Open failed: {error}	Otvaranje nije uspelo: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Strane kao slojevi
+	Cross-layout sheet	List u rasporedu krsta
+	+X face only	Samo +X strana
+	Uncompressed	Nekompresovano
+@plural	{n} mip level|{n} mip levels	{n} mip nivo|{n} mip nivoa|{n} mip nivoa
+@plural	{n} face|{n} faces	{n} strana|{n} strane|{n} strana
 
 # Color Table (.act) dialog
 	There is no color table to save.	Нема табеле боја за чување.

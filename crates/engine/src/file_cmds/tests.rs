@@ -314,6 +314,8 @@ fn save_a_copy_writes_the_dds_options_asked_for() {
         (json!({"ddsCompression": "bc1"}), *b"DXT1", 1),
         (json!({"ddsCompression": "DXT3", "ddsMipmaps": false}), *b"DXT3", 1),
         (json!({"ddsCompression": "bc3", "ddsMipmaps": true}), *b"DXT5", 5),
+        (json!({"ddsCompression": "bc4"}), *b"DX10", 1),
+        (json!({"ddsCompression": "bc7", "ddsMipmaps": true}), *b"DX10", 5),
         (json!({"ddsCompression": null, "ddsMipmaps": null}), [0; 4], 1),
     ] {
         let mut s = session(16, 12, 8);
@@ -328,7 +330,7 @@ fn save_a_copy_writes_the_dds_options_asked_for() {
     let mut s = session(8, 8, 8);
     let state = |s: &Session| s.active().map(|st| (st.revision, st.path.clone(), st.is_dirty()));
     let before = state(&s);
-    for bad in [json!({"ddsCompression": "bc7"}), json!({"ddsCompression": 1}), json!({"ddsMipmaps": "yes"}), json!({"ddsMipmaps": 1})] {
+    for bad in [json!({"ddsCompression": "bc6h"}), json!({"ddsCompression": 1}), json!({"ddsMipmaps": "yes"}), json!({"ddsMipmaps": 1})] {
         let out = join(&dir, "bad.dds");
         let mut p = bad.clone();
         p["path"] = json!(out);
@@ -341,11 +343,116 @@ fn save_a_copy_writes_the_dds_options_asked_for() {
 
 #[test]
 fn dds_params_are_none_until_one_is_given() {
-    use photocraft_io::{DdsCompression, DdsOptions};
+    use photocraft_io::{DdsCompression, DdsOptions, DdsQuality};
     assert_eq!(dds_param(&json!({}), "file.saveAs").unwrap(), None);
     assert_eq!(dds_param(&json!({"ddsCompression": null}), "file.saveAs").unwrap(), None);
-    assert_eq!(dds_param(&json!({"ddsMipmaps": true}), "file.saveAs").unwrap(), Some(DdsOptions { compression: DdsCompression::None, mipmaps: true }));
-    assert_eq!(dds_param(&json!({"ddsCompression": "bc2"}), "file.saveAs").unwrap(), Some(DdsOptions { compression: DdsCompression::Bc2, mipmaps: false }));
+    assert_eq!(
+        dds_param(&json!({"ddsMipmaps": true}), "file.saveAs").unwrap(),
+        Some(DdsOptions { compression: DdsCompression::None, mipmaps: true, ..Default::default() })
+    );
+    assert_eq!(
+        dds_param(&json!({"ddsCompression": "bc2"}), "file.saveAs").unwrap(),
+        Some(DdsOptions { compression: DdsCompression::Bc2, mipmaps: false, ..Default::default() })
+    );
+    assert_eq!(
+        dds_param(&json!({"ddsQuality": "fast", "ddsSrgb": true}), "file.saveAs").unwrap(),
+        Some(DdsOptions { quality: DdsQuality::Fastest, srgb: true, ..Default::default() })
+    );
+    for bad in [json!({"ddsQuality": "best"}), json!({"ddsQuality": 2}), json!({"ddsSrgb": "yes"})] {
+        assert!(matches!(dds_param(&bad, "file.saveAs"), Err(EngineError::BadParams { .. })), "{bad}");
+    }
+    use photocraft_io::DdsMipFilter;
+    assert_eq!(
+        dds_param(
+            &json!({
+                "ddsCompression": "bc1a",
+                "ddsMipFilter": "kaiser",
+                "ddsMinMipSize": 4,
+                "ddsMaxMipCount": 3,
+                "ddsMipGammaCorrect": false,
+                "ddsMipPremultAlpha": false,
+                "ddsPremultAlpha": true,
+                "ddsNormalMap": true,
+                "ddsFlip": true
+            }),
+            "file.saveAs"
+        )
+        .unwrap(),
+        Some(DdsOptions {
+            compression: DdsCompression::Bc1a,
+            mip_filter: DdsMipFilter::Kaiser,
+            min_mip_size: 4,
+            max_mip_count: 3,
+            mip_gamma_correct: false,
+            mip_premult_alpha: false,
+            export_premult_alpha: true,
+            normal_map: true,
+            flip: true,
+            ..Default::default()
+        })
+    );
+    for bad in [
+        json!({"ddsCompression": "bc6h"}),
+        json!({"ddsMipFilter": "sinc"}),
+        json!({"ddsMinMipSize": "big"}),
+        json!({"ddsMinMipSize": 0}),
+        json!({"ddsMaxMipCount": -1}),
+        json!({"ddsNormalMap": "yes"}),
+        json!({"ddsFlip": 1}),
+        json!({"ddsCube": "sphere"}),
+        json!({"ddsCube": 6}),
+    ] {
+        assert!(matches!(dds_param(&bad, "file.saveAs"), Err(EngineError::BadParams { .. })), "{bad}");
+    }
+    use photocraft_io::DdsCubeMap;
+    assert_eq!(dds_param(&json!({"ddsCube": "cross"}), "file.saveAs").unwrap(), Some(DdsOptions { cube: DdsCubeMap::Cross, ..Default::default() }));
+}
+
+/// `ddsCube` makes a cubemap: a 4:3 sheet splits into its six faces, six pixel layers become
+/// them. Anything else is refused, nothing written.
+#[test]
+fn save_a_copy_writes_a_cubemap() {
+    let dir = tmp("dds-cube");
+    let mut s = session(16, 12, 8);
+    let out = join(&dir, "cross.dds");
+    s.execute("file.saveACopy", json!({"path": out, "ddsCompression": "none", "ddsCube": "cross"})).unwrap();
+    let info = photocraft_codecs::dds_info(&std::fs::read(&out).unwrap()).unwrap();
+    assert!((info.cube, info.faces) == (true, 6));
+    assert_eq!(
+        photocraft_codecs::decode_dds_faces(&std::fs::read(&out).unwrap(), &photocraft_codecs::DecodeOptions::default()).unwrap()[0].1[0].dimensions(),
+        (4, 4)
+    );
+    // A square document without six layers can't write either mode.
+    let mut s = session(8, 8, 8);
+    for cube in ["layers", "cross"] {
+        let out = join(&dir, "no.dds");
+        let r = s.execute("file.saveACopy", json!({"path": out, "ddsCube": cube}));
+        assert!(r.is_err(), "{cube}: {r:?}");
+        assert!(!std::path::Path::new(&out).exists());
+    }
+}
+
+/// `ddsAlphaChannel`/`ddsMipmaps` are `file.open`/`file.openAs`'s answers to the DDS import prompt;
+/// `file.saveACopy` on a .dds reads them back. Bad values are refused.
+#[test]
+fn open_as_takes_the_dds_import_answers() {
+    let dir = tmp("dds-import");
+    // An opaque 8×8 source saved as a mip-mapped DXT5: five levels, alpha channel.
+    let mut s = session(8, 8, 8);
+    let src = join(&dir, "in.dds");
+    s.execute("file.saveACopy", json!({"path": src, "ddsCompression": "bc3", "ddsMipmaps": true})).unwrap();
+
+    let mut plain = session(1, 1, 8);
+    assert!(matches!(open_as(&mut plain, &json!({"path": src, "as": "dds", "ddsMipmaps": 3})), Err(EngineError::BadParams { .. })));
+    assert!(matches!(open_as(&mut plain, &json!({"path": src, "as": "dds", "ddsAlphaChannel": "yes"})), Err(EngineError::BadParams { .. })));
+
+    let mut s = session(1, 1, 8);
+    open_as(&mut s, &json!({"path": src, "as": "dds", "ddsMipmaps": true})).unwrap();
+    assert_eq!(s.active().unwrap().doc.layers.len(), 4, "8×8 → 4×4, 2×2, 1×1");
+
+    let mut s = session(1, 1, 8);
+    open_as(&mut s, &json!({"path": src, "as": "dds"})).unwrap();
+    assert_eq!(s.active().unwrap().doc.layers.len(), 1, "default: the top level only");
 }
 
 /// A `tgaBits` other than 24 or 32 is a bad parameter, reported before anything is written.

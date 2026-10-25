@@ -2996,7 +2996,41 @@ curves	Smooth	平滑
 # DDS Options (#1327)
 	DDS Options	DDS 選項
 	Compression	壓縮
+	A8 / alpha only	A8 /  Alpha
 	Generate Mipmaps	產生 Mipmap
+	sRGB	sRGB
+	Box	盒式
+	Min	最小值
+	Max	最大值
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	最快
+	Production	成品
+	Highest	最高
+	Filter in linear light	在線性光下過濾
+	Filter premultiplied (no alpha bleed)	預乘過濾（無 Alpha 滲色）
+	Premultiplied alpha	預乘 Alpha
+	Normal map	法線貼圖
+	Flip vertically	垂直翻轉
+	Stop at	最小
+	px; at most	px；最多
+	levels	級
+	Cubemap	立方體貼圖
+	Faces from layers	從圖層生成各面
+
+# DDS Import (#8632)
+	DDS Import	DDS 匯入
+	Load transparency as alpha channel	將透明度載入為 Alpha 通道
+	Mipmaps as separate layers	Mipmap 作為單獨圖層
+	Open cancelled	已取消開啟
+	Open failed: {error}	開啟失敗：{error}
+	{name} ({width} × {height})	{name}（{width} × {height}）
+	Faces as layers	各面作為圖層
+	Cross-layout sheet	十字版面頁
+	+X face only	僅 +X 面
+	Uncompressed	未壓縮
+@plural	{n} mip level|{n} mip levels	{n} 個 Mip 層級
+@plural	{n} face|{n} faces	{n} 個面
 
 # Color Table (.act) dialog
 	There is no color table to save.	沒有可儲存的色表。

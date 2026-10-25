@@ -76,6 +76,7 @@ pub mod crop_shield;
 pub mod crop_size;
 pub mod crop_straighten;
 pub mod crop_ui;
+pub mod dds_import_ui;
 pub mod dds_options_ui;
 pub mod delete_layer_prompt;
 pub mod dialog_alt_reset;
@@ -311,7 +312,7 @@ impl FormatChoices {
 
     /// The export settings with these answers applied.
     pub fn apply(self, settings: ExportSettings) -> ExportSettings {
-        let settings = ExportSettings { tga_bits: self.tga_bits.or(settings.tga_bits), dds: self.dds.unwrap_or(settings.dds), ..settings };
+        let settings = ExportSettings { tga_bits: self.tga_bits.or(settings.tga_bits), dds: self.dds.or(settings.dds), ..settings };
         match self.jpeg {
             Some(j) => j.apply(settings),
             None => settings,
@@ -354,9 +355,10 @@ pub struct ExportSettings {
     /// Targa: bits per pixel from Targa Options or Export As (`None`: 32 with an alpha channel or
     /// transparency, else 24).
     pub tga_bits: Option<photocraft_io::TgaBits>,
-    /// DDS: the compression and mip chain from DDS Options (uncompressed without mipmaps unless
-    /// chosen).
-    pub dds: photocraft_io::DdsOptions,
+    /// DDS: the compression and mip chain from DDS Options. `None` writes what the document's
+    /// own file was opened with (the plug-ins' match-source default), uncompressed without
+    /// mipmaps when it wasn't a writable DDS.
+    pub dds: Option<photocraft_io::DdsOptions>,
     /// PSD/PSB: embed a thumbnail (Preferences › File Handling › Image Previews; see
     /// [`PhotocraftApp::save_settings`]).
     pub image_previews: bool,
@@ -389,7 +391,7 @@ impl Default for ExportSettings {
             tiff_layers: true,
             xmp_all: true,
             tga_bits: None,
-            dds: photocraft_io::DdsOptions::default(),
+            dds: None,
             image_previews: true,
             psd_maximize_compatibility: true,
             embed_icc: true,
@@ -419,7 +421,7 @@ impl ExportSettings {
         opts.tiff_layers = self.tiff_layers;
         opts.xmp = if self.xmp_all { photocraft_io::XmpEmbed::All } else { photocraft_io::XmpEmbed::None };
         opts.tga_bits = self.tga_bits;
-        opts.encode.dds = self.dds;
+        opts.dds = self.dds;
         opts.image_previews = self.image_previews;
         opts.psd_maximize_compatibility = self.psd_maximize_compatibility;
         opts.document_path = self.document_path.clone();
@@ -994,6 +996,8 @@ pub struct PhotocraftApp {
     pub(crate) jpeg_options: Option<jpeg_options_ui::Prompt>,
     /// A save to a DDS texture parked behind the DDS Options prompt (see `dds_options_ui`).
     pub(crate) dds_options: Option<dds_options_ui::Prompt>,
+    /// DDS opens parked behind the DDS Import prompt, in order (see `dds_import_ui`).
+    pub(crate) dds_imports: std::collections::VecDeque<dds_import_ui::Prompt>,
     /// Files read but not opened yet: the first waits on its profile prompt, the rest behind it
     /// (see `open_prompt`).
     pub(crate) held_opens: std::collections::VecDeque<open_prompt::Held>,
@@ -1164,6 +1168,7 @@ impl PhotocraftApp {
             targa_options: None,
             jpeg_options: None,
             dds_options: None,
+            dds_imports: Default::default(),
             held_opens: Default::default(),
             allow_close: false,
             stylus: Default::default(),
@@ -1617,18 +1622,37 @@ impl PhotocraftApp {
     /// [`Self::open_bytes`] for a file read from `path` (File › Save writes back there; it goes
     /// to Open Recent), when known.
     pub(crate) fn open_bytes_from(&mut self, name: &str, bytes: &[u8], path: Option<&str>) -> Result<Vec<String>, String> {
+        self.open_bytes_opts(name, bytes, path, None)
+    }
+
+    /// [`Self::open_bytes_from`] with the DDS import answers (`ddsAlphaChannel`/`ddsMipmaps`/
+    /// `ddsFlip`/`ddsCube`); `None` parks the open behind the DDS Import prompt when the texture
+    /// has choices to make (#8632).
+    pub(crate) fn open_bytes_opts(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        path: Option<&str>,
+        dds: Option<photocraft_io::DdsImport>,
+    ) -> Result<Vec<String>, String> {
         if let Some(r) = preset_files_ui::open(self, name, bytes) {
             return r.map(|()| Vec::new());
         }
+        if dds.is_none() && dds_import_ui::park_bytes(self, name.to_string(), path.map(str::to_string), bytes) {
+            return Ok(Vec::new());
+        }
         let name = &self.open_name(name);
+        let mut opts = photocraft_engine::jobs::import_options(self.session.prefs());
+        if let Some(d) = dds {
+            opts.dds = d;
+        }
         // Decoded on a worker: a tab with progress appears now, the document when it's ready
         // (warnings are shown then).
         if self.background_jobs {
-            jobs_ui::start_open(self, name, path.map(str::to_string), jobs_ui::bytes(bytes))?;
+            jobs_ui::start_open_opts(self, name, path.map(str::to_string), jobs_ui::bytes(bytes), dds)?;
             return Ok(Vec::new());
         }
         let import = self.services.import.as_ref().ok_or("no importer configured")?;
-        let opts = photocraft_engine::jobs::import_options(self.session.prefs());
         let (mut doc, warnings, damaged) = if photocraft_io::is_psd(bytes) {
             // Read PSD damage as structured information in the same decode, not by
             // retrying an error or matching the text of a compatibility warning.
@@ -1671,13 +1695,18 @@ impl PhotocraftApp {
     /// Returns the import warnings (also shown to the user). Brush and gradient
     /// files go to the preset libraries, as for interactive opens.
     pub fn open_automation_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
+        self.open_automation_bytes_opts(name, bytes, None)
+    }
+
+    /// [`Self::open_automation_bytes`] with the DDS import answers `app.open` params gave.
+    pub fn open_automation_bytes_opts(&mut self, name: &str, bytes: &[u8], dds: Option<photocraft_io::DdsImport>) -> Result<Vec<String>, String> {
         let events_enabled = self.session.prefs().script_events.enabled;
         if events_enabled {
             self.session.edit_prefs(|prefs| prefs.script_events.enabled = false);
         }
         let result = match preset_files_ui::open(self, name, bytes) {
             Some(r) => r.map(|()| Vec::new()),
-            None => self.import_automation_document(name, bytes),
+            None => self.import_automation_document(name, bytes, dds),
         };
         if events_enabled {
             self.session.edit_prefs(|prefs| prefs.script_events.enabled = true);
@@ -1687,9 +1716,12 @@ impl PhotocraftApp {
 
     /// The document half of [`open_automation_bytes`](Self::open_automation_bytes): no script
     /// events and no Color Settings policy (which may read user-configured profile paths).
-    fn import_automation_document(&mut self, name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
+    fn import_automation_document(&mut self, name: &str, bytes: &[u8], dds: Option<photocraft_io::DdsImport>) -> Result<Vec<String>, String> {
         let import = self.services.import.as_ref().ok_or("no importer configured")?;
-        let opts = photocraft_engine::jobs::import_options(self.session.prefs());
+        let mut opts = photocraft_engine::jobs::import_options(self.session.prefs());
+        if let Some(d) = dds {
+            opts.dds = d;
+        }
         let (mut doc, warnings) = import(name, bytes, &opts)?;
         photocraft_engine::file_cmds::raw_defaults(&self.session, &warnings, &mut doc);
         // The caller records the path it read from.
@@ -1859,7 +1891,28 @@ impl PhotocraftApp {
             && last.0 == "file.saveAs"
             && last.1.get("path").and_then(Value::as_str) == Some(path)
             && let Some(step) = last.1.as_object()
-            && step.keys().all(|k| matches!(k.as_str(), "path" | "tgaBits" | "ddsCompression" | "ddsMipmaps" | "quality" | "jpegFormat"))
+            && step.keys().all(|k| {
+                matches!(
+                    k.as_str(),
+                    "path"
+                        | "tgaBits"
+                        | "ddsCompression"
+                        | "ddsMipmaps"
+                        | "ddsQuality"
+                        | "ddsSrgb"
+                        | "ddsMipFilter"
+                        | "ddsMinMipSize"
+                        | "ddsMaxMipCount"
+                        | "ddsMipGammaCorrect"
+                        | "ddsMipPremultAlpha"
+                        | "ddsPremultAlpha"
+                        | "ddsNormalMap"
+                        | "ddsFlip"
+                        | "ddsCube"
+                        | "quality"
+                        | "jpegFormat"
+                )
+            })
         {
             let mut step = step.clone();
             step.remove("path");
@@ -2491,6 +2544,7 @@ impl eframe::App for PhotocraftApp {
         targa_options_ui::show(self, &ctx);
         jpeg_options_ui::show(self, &ctx);
         dds_options_ui::show(self, &ctx);
+        dds_import_ui::show(self, &ctx);
         distort_ui::show(self, &ctx);
         camera_raw_ui::show(self, &ctx);
         wide_angle_ui::show(self, &ctx);

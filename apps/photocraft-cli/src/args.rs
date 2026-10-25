@@ -16,7 +16,7 @@ use clap::parser::ValueSource;
 use clap::{ArgAction, ArgGroup, ArgMatches, Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use photocraft_automation::args::{AutomationArgs, ControlArgs, blank_env_is_unset, conflict, control_port, name_env_vars};
 use photocraft_codecs::{JpegFormat, TiffCompression};
-use photocraft_io::{DdsCompression, DpxBits, TgaBits};
+use photocraft_io::{DdsCompression, DdsCubeMap, DdsMipFilter, DdsQuality, DpxBits, TgaBits};
 use serde_json::Value;
 
 /// photocraft-cli: headless PhotoCraft
@@ -63,17 +63,72 @@ pub(crate) struct ExportArgs {
     #[arg(long, value_name = "8|10|12|16", value_parser = dpx_bits)]
     pub(crate) dpx_bits: Option<DpxBits>,
     /// A DDS texture's compression: none (uncompressed, the default), bc1 (DXT1: alpha on or
-    /// off), bc2 (DXT3) or bc3 (DXT5)
-    #[arg(long, value_name = "none|bc1|bc2|bc3", value_parser = dds_compression)]
+    /// off), bc1a (DXT1a, the header promising punch-through alpha), bc2 (DXT3), bc3 (DXT5),
+    /// bc4 (ATI1, one channel), bc5 (ATI2, two channels), bc7 or a8 (an alpha-only mask)
+    #[arg(long, value_name = "none|bc1|bc1a|bc2|bc3|bc4|bc5|bc7|a8", value_parser = dds_compression)]
     pub(crate) dds_compression: Option<DdsCompression>,
     /// Also write a DDS texture's full mip chain
     #[arg(long)]
     pub(crate) dds_mipmaps: bool,
+    /// The BC7 encoder's effort: fastest, normal, production or highest (the default)
+    #[arg(long, value_name = "fastest|normal|production|highest", value_parser = dds_quality)]
+    pub(crate) dds_quality: Option<DdsQuality>,
+    /// Tag a DDS texture sRGB (a DX10 header)
+    #[arg(long)]
+    pub(crate) dds_srgb: bool,
+    /// The 2:1 filter the DDS mip chain is generated with: box (the default), triangle, min,
+    /// max, kaiser or mitchell
+    #[arg(long, value_name = "box|triangle|min|max|kaiser|mitchell", value_parser = dds_mip_filter)]
+    pub(crate) dds_mip_filter: Option<DdsMipFilter>,
+    /// Stop the DDS mip chain at this level size
+    #[arg(long, value_name = "PX", value_parser = clap::value_parser!(u32).range(1..))]
+    pub(crate) dds_min_mip_size: Option<u32>,
+    /// Write at most this many DDS mip levels (0: the whole chain)
+    #[arg(long, value_name = "N")]
+    pub(crate) dds_max_mip_count: Option<u32>,
+    /// Filter DDS mip levels in gamma space, not linear light
+    #[arg(long)]
+    pub(crate) dds_no_mip_gamma: bool,
+    /// Filter DDS mip levels without premultiplying alpha
+    #[arg(long)]
+    pub(crate) dds_no_mip_premult: bool,
+    /// Store premultiplied alpha in a DDS texture
+    #[arg(long)]
+    pub(crate) dds_premult: bool,
+    /// Set a DDS texture's normal-map header flag
+    #[arg(long)]
+    pub(crate) dds_normal_map: bool,
+    /// Write a DDS's rows bottom-up
+    #[arg(long)]
+    pub(crate) dds_flip: bool,
+    /// Write a DDS cubemap: `layers` makes the six bottom pixel layers the +X -X +Y -Y +Z -Z
+    /// faces, `cross` splits a 4:3 cross-layout sheet (off, the default, is a plain texture)
+    #[arg(long, value_name = "off|layers|cross", value_parser = dds_cube_map)]
+    pub(crate) dds_cube: Option<DdsCubeMap>,
     /// A JPEG's scans, as JPEG Options picks them: baseline (the default), optimized (Huffman
     /// tables fitted to the image; RGB is written 4:2:0 and keeps the standard tables, so only Gray
     /// and CMYK shrink) or progressive
     #[arg(long, value_name = "baseline|optimized|progressive", value_parser = jpeg_format)]
     pub(crate) jpeg_format: Option<JpegFormat>,
+}
+
+// How a DDS input is opened: shared by `convert`, `run` and `batch`, which all read files.
+#[derive(Args)]
+pub(crate) struct ImportArgs {
+    /// Open a DDS texture's alpha as an "Alpha 1" document channel rather than transparency
+    /// (game textures often carry data, such as specular maps, in it)
+    #[arg(long)]
+    pub(crate) dds_alpha_channel: bool,
+    /// Open each mip level of a DDS texture as a layer
+    #[arg(long)]
+    pub(crate) dds_mips_as_layers: bool,
+    /// Open a DDS's rows flipped vertically
+    #[arg(long)]
+    pub(crate) dds_load_flip: bool,
+    /// Open a DDS cubemap as `layers` (the default, one layer per face), as the 4:3
+    /// cross-layout `cross` sheet, or only its +X face (`off`)
+    #[arg(long, value_name = "layers|cross|off", value_parser = dds_cube_map)]
+    pub(crate) dds_load_cube: Option<DdsCubeMap>,
 }
 
 /// Convert between formats (.pcraft, .psd, .png, .jpg, .tif, .webp, .exr, …)
@@ -91,6 +146,8 @@ pub(crate) struct ConvertArgs {
     /// Allow an <OUT> that is the <IN> file, replacing the original
     #[arg(long)]
     pub(crate) in_place: bool,
+    #[command(flatten)]
+    pub(crate) import: ImportArgs,
     #[command(flatten)]
     pub(crate) export: ExportArgs,
 }
@@ -131,6 +188,8 @@ pub(crate) struct RunArgs {
     #[arg(long)]
     pub(crate) in_place: bool,
     #[command(flatten)]
+    pub(crate) import: ImportArgs,
+    #[command(flatten)]
     pub(crate) export: ExportArgs,
     /// `--cmd` and `--params` values in command-line order, set by [`parse`].
     #[arg(skip)]
@@ -169,6 +228,8 @@ pub(crate) struct BatchArgs {
     /// originals; --in-place allows it
     #[arg(long)]
     pub(crate) in_place: bool,
+    #[command(flatten)]
+    pub(crate) import: ImportArgs,
     #[command(flatten)]
     pub(crate) export: ExportArgs,
 }
@@ -246,8 +307,14 @@ enum ValueError {
     TgaBits,
     #[error("expected 8, 10, 12 or 16")]
     DpxBits,
-    #[error("expected none, bc1, bc2 or bc3")]
+    #[error("expected none, bc1, bc1a, bc2, bc3, bc4, bc5, bc7 or a8")]
     DdsCompression,
+    #[error("expected fastest, normal, production or highest")]
+    DdsQuality,
+    #[error("expected box, triangle, min, max, kaiser or mitchell")]
+    DdsMipFilter,
+    #[error("expected off, layers or cross")]
+    DdsCubeMap,
     #[error("expected none, lzw or zip")]
     TiffCompression,
     #[error("expected baseline, optimized or progressive")]
@@ -295,6 +362,18 @@ fn dpx_bits(s: &str) -> Result<DpxBits, ValueError> {
 
 fn dds_compression(s: &str) -> Result<DdsCompression, ValueError> {
     DdsCompression::from_name(s).ok_or(ValueError::DdsCompression)
+}
+
+fn dds_quality(s: &str) -> Result<DdsQuality, ValueError> {
+    DdsQuality::from_name(s).ok_or(ValueError::DdsQuality)
+}
+
+fn dds_mip_filter(s: &str) -> Result<DdsMipFilter, ValueError> {
+    DdsMipFilter::from_name(s).ok_or(ValueError::DdsMipFilter)
+}
+
+fn dds_cube_map(s: &str) -> Result<DdsCubeMap, ValueError> {
+    DdsCubeMap::from_name(s).ok_or(ValueError::DdsCubeMap)
 }
 
 fn tiff_compression(s: &str) -> Result<TiffCompression, ValueError> {

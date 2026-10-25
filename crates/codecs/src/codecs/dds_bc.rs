@@ -54,6 +54,14 @@ pub(crate) fn alpha_palette(a0: u8, a1: u8) -> [u8; 8] {
     palette.map(|v| v as u8)
 }
 
+/// The signed variant used by BC4_SNORM and BC5_SNORM: biasing the `i8` endpoints by 128
+/// first lets the unsigned palette do the interpolation — the same decode other readers
+/// (FFmpeg, DirectXTex) produce for signed BC4/BC5, within a level where DirectXTex
+/// clamps an endpoint of -128 to -127.
+pub(crate) fn alpha_palette_signed(a0: i8, a1: i8) -> [u8; 8] {
+    alpha_palette((i32::from(a0) + 128) as u8, (i32::from(a1) + 128) as u8)
+}
+
 /// A BC1 block. Texels under half opacity become BC1's transparent black, which needs the
 /// three-colour mode; an opaque block takes whichever mode fits its colours better.
 pub(crate) fn encode_bc1(block: &Block, inside: Mask) -> [u8; 8] {
@@ -69,7 +77,17 @@ pub(crate) fn encode_bc2(block: &Block, inside: Mask) -> [u8; 16] {
 
 /// A BC3 block: an interpolated alpha block, then a four-colour block.
 pub(crate) fn encode_bc3(block: &Block, inside: Mask) -> [u8; 16] {
-    join(alpha_block(block, inside), colour_block(block, inside, 0, false))
+    join(alpha_block(block, inside, 3), colour_block(block, inside, 0, false))
+}
+
+/// A BC4 block: the interpolated block BC3 uses for alpha, storing the first channel.
+pub(crate) fn encode_bc4(block: &Block, inside: Mask) -> [u8; 8] {
+    alpha_block(block, inside, 0)
+}
+
+/// A BC5 block: two interpolated blocks storing the first and second channels.
+pub(crate) fn encode_bc5(block: &Block, inside: Mask) -> [u8; 16] {
+    join(alpha_block(block, inside, 0), alpha_block(block, inside, 1))
 }
 
 fn join(a: [u8; 8], b: [u8; 8]) -> [u8; 16] {
@@ -248,20 +266,21 @@ fn least_squares(block: &Block, opaque: Mask, bytes: &[u8; 8]) -> Option<(u16, u
     Some((to565(e0), to565(e1)))
 }
 
-/// A BC3 alpha block: whichever of the two modes (eight values between the extremes, or six
-/// between the extremes other than 0 and 255, plus exact 0 and 255) fits better.
-fn alpha_block(block: &Block, inside: Mask) -> [u8; 8] {
-    let alphas = || block.iter().enumerate().filter(move |(t, _)| inside >> t & 1 != 0).map(|(_, texel)| texel[3]);
+/// A BC3 alpha block (also a BC4 block or half of BC5, over channel `channel`): whichever of
+/// the two modes (eight values between the extremes, or six between the extremes other than
+/// 0 and 255, plus exact 0 and 255) fits better.
+fn alpha_block(block: &Block, inside: Mask, channel: usize) -> [u8; 8] {
+    let alphas = || block.iter().enumerate().filter(move |(t, _)| inside >> t & 1 != 0).map(|(_, texel)| texel[channel]);
     let range = |values: &mut dyn Iterator<Item = u8>| values.fold(None, |r: Option<(u8, u8)>, a| Some(r.map_or((a, a), |(lo, hi)| (lo.min(a), hi.max(a)))));
     let (lo, hi) = range(&mut alphas()).unwrap_or((0, 0));
     // Eight values need a0 > a1; equal ends fall to the six-value mode, which starts with a0 too.
-    let eight = alpha_fit(block, inside, hi, lo);
+    let eight = alpha_fit(block, inside, hi, lo, channel);
     let (mid_lo, mid_hi) = range(&mut alphas().filter(|a| !matches!(a, 0 | 255))).unwrap_or((0, 0));
-    let six = alpha_fit(block, inside, mid_lo, mid_hi);
+    let six = alpha_fit(block, inside, mid_lo, mid_hi, channel);
     if six.1 < eight.1 { six.0 } else { eight.0 }
 }
 
-fn alpha_fit(block: &Block, inside: Mask, a0: u8, a1: u8) -> ([u8; 8], u32) {
+fn alpha_fit(block: &Block, inside: Mask, a0: u8, a1: u8, channel: usize) -> ([u8; 8], u32) {
     let palette = alpha_palette(a0, a1);
     let mut bits = 0u64;
     let mut error = 0u32;
@@ -269,7 +288,7 @@ fn alpha_fit(block: &Block, inside: Mask, a0: u8, a1: u8) -> ([u8; 8], u32) {
         if inside >> t & 1 == 0 {
             continue;
         }
-        let (i, d) = palette.iter().enumerate().map(|(i, &p)| (i, u32::from(p.abs_diff(texel[3])).pow(2))).min_by_key(|&(_, d)| d).unwrap_or((0, 0));
+        let (i, d) = palette.iter().enumerate().map(|(i, &p)| (i, u32::from(p.abs_diff(texel[channel])).pow(2))).min_by_key(|&(_, d)| d).unwrap_or((0, 0));
         error += d;
         bits |= (i as u64) << (3 * t);
     }
@@ -332,7 +351,7 @@ mod tests {
     fn alpha_blocks_pick_the_mode_that_keeps_0_and_255() {
         // 0, 255 and a cluster in between: the six-value mode stores 0 and 255 exactly.
         let block: Block = std::array::from_fn(|t| [0, 0, 0, [0, 255, 100, 110][t % 4]]);
-        let bytes = alpha_block(&block, u16::MAX);
+        let bytes = alpha_block(&block, u16::MAX, 3);
         assert!(bytes[0] <= bytes[1], "six-value mode");
         let palette = alpha_palette(bytes[0], bytes[1]);
         let bits = u64::from_le_bytes([bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], 0, 0]);

@@ -1,5 +1,7 @@
 pub(crate) mod dds;
 pub(crate) mod dds_bc;
+pub(crate) mod dds_bc7;
+pub(crate) mod dds_bc7_enc;
 pub(crate) mod deep_exr;
 pub(crate) mod dicom;
 pub(crate) mod dpx;

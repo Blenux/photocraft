@@ -2850,6 +2850,7 @@ cameraData	Lens	Objektiv
 	Compatibility	Kompatibilita
 	Compose	Skládat
 	Compression	Komprese
+	A8 / alpha only	A8 / pouze alfa
 	Condensed	Zúžené
 	Conditional Mode Change	Podmíněná změna režimu
 	Confirm	Potvrdit
@@ -4118,6 +4119,38 @@ cameraRaw	Dehaze	Odstranění oparu
 # DDS Options (#1327)
 	DDS Options	Možnosti DDS
 	Generate Mipmaps	Generovat mipmapy
+	Box	Box
+	Min	Min.
+	Max	Max.
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	Nejrychlejší
+	Production	Produkční
+	Highest	Nejvyšší
+	Filter in linear light	Filtrovat v lineárním světle
+	Filter premultiplied (no alpha bleed)	Filtrovat přednásobené (bez prosakování alfa)
+	Premultiplied alpha	Přednásobená alfa
+	Normal map	Normálová mapa
+	Flip vertically	Převrátit svisle
+	Stop at	Zastavit na
+	px; at most	px; nejvýše
+	levels	úrovní
+	Cubemap	Krychlová mapa
+	Faces from layers	Stěny z vrstev
+
+# DDS Import (#8632)
+	DDS Import	Import DDS
+	Load transparency as alpha channel	Načíst průhlednost jako alfa kanál
+	Mipmaps as separate layers	Mipmapy jako samostatné vrstvy
+	Open cancelled	Otevření zrušeno
+	Open failed: {error}	Otevření selhalo: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Stěny jako vrstvy
+	Cross-layout sheet	List v křížovém rozložení
+	+X face only	Pouze stěna +X
+	Uncompressed	Nekomprimováno
+@plural	{n} mip level|{n} mip levels	{n} mip úroveň|{n} mip úrovně|{n} mip úrovní
+@plural	{n} face|{n} faces	{n} stěna|{n} stěny|{n} stěn
 
 # Color Table (.act) dialog
 	There is no color table to save.	Neexistuje žádná tabulka barev k uložení.

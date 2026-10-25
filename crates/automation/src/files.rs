@@ -18,24 +18,35 @@ pub struct Opened {
 
 /// Decode a document that was read through a filesystem capability.
 pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<Opened, AutomationError> {
+    open_bytes_opts(name, bytes, &photocraft_io::ImportOptions::default())
+}
+
+/// [`open_bytes`] with the caller's import options (a DDS texture's alpha, mip chain, flip and
+/// cubemap choices).
+pub fn open_bytes_opts(name: &str, bytes: &[u8], opts: &photocraft_io::ImportOptions) -> Result<Opened, AutomationError> {
     if Path::new(name).extension().is_some_and(|extension| extension.eq_ignore_ascii_case(photocraft_format::EXTENSION)) {
         let document = photocraft_format::load_from_bytes(bytes)?;
         return Ok(Opened { warnings: photocraft_io::open_warnings(&document), document, source_read_only: false });
     }
-    let r = photocraft_io::import(name, bytes)?;
+    let r = photocraft_io::import_with_options(name, bytes, opts)?;
     Ok(Opened { document: r.document, warnings: r.warnings, source_read_only: r.source_read_only })
 }
 
 /// Open a document from disk. Directory bundles and `.pcraft` ZIPs load
 /// natively; everything else goes through `photocraft-io` (PSD, PNG, …).
 pub fn open(path: &Path) -> Result<Opened, AutomationError> {
+    open_opts(path, &photocraft_io::ImportOptions::default())
+}
+
+/// [`open`] with the caller's import options.
+pub fn open_opts(path: &Path, opts: &photocraft_io::ImportOptions) -> Result<Opened, AutomationError> {
     if path.is_dir() {
         let document = photocraft_format::load_path(path)?;
         return Ok(Opened { warnings: photocraft_io::open_warnings(&document), document, source_read_only: false });
     }
     let bytes = photocraft_format::read_file(path).map_err(|e| AutomationError::Io(format!("{}: {e}", path.display())))?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    open_bytes(&name, &bytes)
+    open_bytes_opts(&name, &bytes, opts)
 }
 
 /// Previews for a `.pcraft` bundle.

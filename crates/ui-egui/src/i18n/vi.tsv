@@ -3864,7 +3864,40 @@ curves	Smooth	Làm mượt
 # DDS Options (#1327)
 	DDS Options	Tùy chọn DDS
 	Compression	Nén
+	A8 / alpha only	A8 / chỉ alpha
 	Generate Mipmaps	Tạo mipmap
+	Box	Hộp
+	Min	Tối thiểu
+	Max	Tối đa
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	Nhanh nhất
+	Production	Hoàn thiện
+	Highest	Cao nhất
+	Filter in linear light	Lọc trong ánh sáng tuyến tính
+	Filter premultiplied (no alpha bleed)	Lọc tiền nhân (không rỉ alpha)
+	Premultiplied alpha	Alpha tiền nhân
+	Normal map	Bản đồ pháp tuyến
+	Flip vertically	Lật dọc
+	Stop at	Dừng ở
+	px; at most	px; tối đa
+	levels	mức
+	Cubemap	Cubemap
+	Faces from layers	Các mặt từ các lớp
+
+# DDS Import (#8632)
+	DDS Import	Nhập DDS
+	Load transparency as alpha channel	Tải độ trong suốt thành kênh alpha
+	Mipmaps as separate layers	Mipmap thành các lớp riêng
+	Open cancelled	Đã hủy mở
+	Open failed: {error}	Mở thất bại: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Các mặt thành lớp
+	Cross-layout sheet	Tờ bố cục chữ thập
+	+X face only	Chỉ mặt +X
+	Uncompressed	Không nén
+@plural	{n} mip level|{n} mip levels	{n} mức mip
+@plural	{n} face|{n} faces	{n} mặt
 
 # Color Table (.act) dialog
 	There is no color table to save.	Không có bảng màu nào để lưu.

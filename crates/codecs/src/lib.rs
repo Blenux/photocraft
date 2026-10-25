@@ -40,7 +40,8 @@ pub use crate::image::{
     ChannelLayout, CryptomatteBuffer, CryptomatteLayer, DecodeWarning, DeepChannel, DeepImage, ExrChannelInfo, ExrPartInfo, Image, Metadata, SampleType,
 };
 pub use crate::options::{
-    DdsCompression, DdsOptions, DecodeOptions, DpxBits, EncodeOptions, ExrCompression, JpegFormat, Limits, PngCompression, PngStereo, TiffCompression,
+    DdsCompression, DdsCubeMap, DdsImport, DdsInfo, DdsMipFilter, DdsOptions, DdsQuality, DecodeOptions, DpxBits, EncodeOptions, ExrCompression, JpegFormat,
+    Limits, PngCompression, PngStereo, TiffCompression,
 };
 pub use crate::orientation::{exif_orientation, upright_exif, upright_xmp};
 pub use crate::resolution::{exif_resolution, export_exif, export_xmp, photoshop_resolution, xmp_resolution};
@@ -167,6 +168,27 @@ pub fn decode_tiff_page(bytes: &[u8], page: usize, opts: &DecodeOptions) -> Resu
 /// [`MAX_GIF_FRAMES`] and `opts.limits` for what is refused.
 pub fn decode_gif_frames(bytes: &[u8], opts: &DecodeOptions) -> Result<Vec<AnimationFrame>, CodecError> {
     crate::codecs::gif_frames::decode(bytes, opts)
+}
+
+/// Decodes every declared mip level of a DDS texture, largest first; [`decode`] reads the top
+/// level only. Level pixels are read as the file stores them (the top level's pitch applies to
+/// level 0); a level that ends before its size fails the whole decode. A cubemap's chain is
+/// its +X face's — [`decode_dds_faces`] reads them all.
+pub fn decode_dds_levels(bytes: &[u8], opts: &DecodeOptions) -> Result<Vec<Image>, CodecError> {
+    dds::decode_levels(bytes, &opts.limits)
+}
+
+/// Decodes every face of a DDS cubemap: `(canonical index, mip chain)` pairs in file order,
+/// the index `0`–`5` for `+X -X +Y -Y +Z -Z` (a partial legacy cube skips its missing faces)
+/// and each chain level-0 first. A plain 2D texture yields a single `0`-indexed face.
+pub fn decode_dds_faces(bytes: &[u8], opts: &DecodeOptions) -> Result<Vec<(u8, Vec<Image>)>, CodecError> {
+    dds::decode_faces(bytes, &opts.limits)
+}
+
+/// A DDS texture's dimensions, mip count and whether it carries alpha, read from the header
+/// without decoding: what File › Open's DDS prompt asks about.
+pub fn dds_info(bytes: &[u8]) -> Result<DdsInfo, CodecError> {
+    dds::info(bytes)
 }
 
 /// Decodes every frame of a WebP (a still one yields one frame with a 0 delay, as [`decode`]
@@ -308,4 +330,15 @@ pub fn encode(image: &Image, format: Format, opts: &EncodeOptions) -> Result<Vec
         Format::Heif => Err(CodecError::unsupported(format, "encoding is not available in this build")),
         Format::Gif | Format::Bmp | Format::Tga | Format::Ico | Format::Qoi | Format::Hdr | Format::Avif => via_image::encode(format, image, plan, opts),
     }
+}
+
+/// Encode six `faces` (`+X -X +Y -Y +Z -Z`, square and one size) as a DDS cubemap, each face
+/// with its own mip chain per `opts.dds`. The header is the legacy one when the store has a
+/// legacy name, else DX10 with `MISC_TEXTURECUBE` and `arraySize` 6.
+pub fn encode_dds_cube(faces: &[Image], opts: &EncodeOptions) -> Result<Vec<u8>, CodecError> {
+    let Some(first) = faces.first() else {
+        return Err(CodecError::encode(Format::Dds, "a cubemap write needs six faces"));
+    };
+    let plan = fidelity::plan(first, Format::Dds, opts);
+    dds::encode_faces(faces, plan, opts)
 }

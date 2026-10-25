@@ -3384,7 +3384,40 @@ curves	Smooth	Lisser
 # DDS Options (#1327)
 	DDS Options	Options DDS
 	Compression	Compression
+	A8 / alpha only	A8 / alpha seulement
 	Generate Mipmaps	Générer les mipmaps
+	Box	Boîte
+	Min	Min.
+	Max	Max.
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	La plus rapide
+	Production	Production
+	Highest	La plus élevée
+	Filter in linear light	Filtrer en lumière linéaire
+	Filter premultiplied (no alpha bleed)	Filtrer en prémultiplié (sans bavure d'alpha)
+	Premultiplied alpha	Alpha prémultiplié
+	Normal map	Carte de normales
+	Flip vertically	Retourner verticalement
+	Stop at	Arrêter à
+	px; at most	px ; au maximum
+	levels	niveaux
+	Cubemap	Cubemap
+	Faces from layers	Faces depuis les calques
+
+# DDS Import (#8632)
+	DDS Import	Importation DDS
+	Load transparency as alpha channel	Charger la transparence en canal alpha
+	Mipmaps as separate layers	Mipmaps en calques séparés
+	Open cancelled	Ouverture annulée
+	Open failed: {error}	Échec de l'ouverture : {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Faces en calques
+	Cross-layout sheet	Feuille en croix
+	+X face only	Face +X uniquement
+	Uncompressed	Non compressé
+@plural	{n} mip level|{n} mip levels	{n} niveau mip|{n} niveaux mip
+@plural	{n} face|{n} faces	{n} face|{n} faces
 
 # Color Table (.act) dialog
 	There is no color table to save.	Il n’y a aucune table de couleurs à enregistrer.

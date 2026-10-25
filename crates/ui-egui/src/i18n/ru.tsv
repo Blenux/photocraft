@@ -3853,7 +3853,40 @@ curves	Smooth	Сгладить
 # DDS Options (#1327)
 	DDS Options	Параметры DDS
 	Compression	Сжатие
+	A8 / alpha only	A8 / только альфа
 	Generate Mipmaps	Создать MIP-карты
+	Box	Прямоугольный
+	Min	Мин.
+	Max	Макс.
+	Kaiser	Кайзер
+	Mitchell-Netravali	Митчелл-Нетравали
+	Fastest	Быстрейшее
+	Production	Продакшн
+	Highest	Наивысшее
+	Filter in linear light	Фильтровать в линейном свете
+	Filter premultiplied (no alpha bleed)	Фильтр с преумножением (без размытия альфа)
+	Premultiplied alpha	Предумноженная альфа
+	Normal map	Карта нормалей
+	Flip vertically	Отразить по вертикали
+	Stop at	Не меньше
+	px; at most	px; не больше
+	levels	уровней
+	Cubemap	Кубическая карта
+	Faces from layers	Грани из слоёв
+
+# DDS Import (#8632)
+	DDS Import	Импорт DDS
+	Load transparency as alpha channel	Загрузить прозрачность как альфа-канал
+	Mipmaps as separate layers	Мип-уровни отдельными слоями
+	Open cancelled	Открытие отменено
+	Open failed: {error}	Не удалось открыть: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Грани как слои
+	Cross-layout sheet	Лист крестовидной раскладки
+	+X face only	Только грань +X
+	Uncompressed	Без сжатия
+@plural	{n} mip level|{n} mip levels	{n} MIP-уровень|{n} MIP-уровня|{n} MIP-уровней
+@plural	{n} face|{n} faces	{n} грань|{n} грани|{n} граней
 
 # Color Table (.act) dialog
 	There is no color table to save.	Нет таблицы цветов для сохранения.

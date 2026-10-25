@@ -3989,7 +3989,40 @@ curves	Smooth	Wygładź
 # DDS Options (#1327)
 	DDS Options	Opcje DDS
 	Compression	Kompresja
+	A8 / alpha only	A8 / tylko alfa
 	Generate Mipmaps	Generuj mipmapy
+	Box	Box
+	Min	Min.
+	Max	Maks.
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	Najszybsza
+	Production	Produkcyjna
+	Highest	Najwyższa
+	Filter in linear light	Filtruj w świetle liniowym
+	Filter premultiplied (no alpha bleed)	Filtruj premultiplikowane (bez rozlewania alfa)
+	Premultiplied alpha	Premultiplikowana alfa
+	Normal map	Mapa normalnych
+	Flip vertically	Odwróć w pionie
+	Stop at	Zatrzymaj na
+	px; at most	px; maksymalnie
+	levels	poziomów
+	Cubemap	Cubemap
+	Faces from layers	Ściany z warstw
+
+# DDS Import (#8632)
+	DDS Import	Import DDS
+	Load transparency as alpha channel	Wczytaj przezroczystość jako kanał alfa
+	Mipmaps as separate layers	Mipmapy jako osobne warstwy
+	Open cancelled	Otwieranie anulowane
+	Open failed: {error}	Otwieranie nie powiodło się: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Ściany jako warstwy
+	Cross-layout sheet	Arkusz w układzie krzyża
+	+X face only	Tylko ściana +X
+	Uncompressed	Bez kompresji
+@plural	{n} mip level|{n} mip levels	{n} poziom mip|{n} poziomy mip|{n} poziomów mip
+@plural	{n} face|{n} faces	{n} ściana|{n} ściany|{n} ścian
 
 # Color Table (.act) dialog
 	There is no color table to save.	Brak tabeli kolorów do zapisania.

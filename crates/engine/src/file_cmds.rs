@@ -356,9 +356,12 @@ pub(crate) struct SaveOpts {
     pub dpx_bits: Option<photocraft_io::DpxBits>,
     /// TIFF: the image compression (`"tiffCompression": "none" | "lzw" | "zip"`); unset, none.
     pub tiff_compression: Option<photocraft_codecs::TiffCompression>,
-    /// DDS: the compression and whether to write the mip chain (`"ddsCompression"`,
-    /// `"ddsMipmaps"`); unset, uncompressed without mipmaps.
-    pub dds: photocraft_io::DdsOptions,
+    /// DDS: the texture's storage and mip pipeline (`"ddsCompression"`, `"ddsMipmaps"`,
+    /// `"ddsQuality"`, `"ddsSrgb"`, `"ddsMipFilter"`, `"ddsMinMipSize"`, `"ddsMaxMipCount"`,
+    /// `"ddsMipGammaCorrect"`, `"ddsMipPremultAlpha"`, `"ddsPremultAlpha"`, `"ddsNormalMap"`,
+    /// `"ddsFlip"`, `"ddsCube"`); unset, the file's own encoding when it is writable, else uncompressed
+    /// without mipmaps.
+    pub dds: Option<photocraft_io::DdsOptions>,
     /// PSD/PSB: embed the thumbnail resource (Preferences › File Handling › Image Previews).
     pub image_previews: bool,
     /// PSD/PSB: write the real merged image (Preferences › File Handling › Maximize PSD and PSB
@@ -375,7 +378,7 @@ impl Default for SaveOpts {
             tga_bits: None,
             dpx_bits: None,
             tiff_compression: None,
-            dds: photocraft_io::DdsOptions::default(),
+            dds: None,
             image_previews: true,
             psd_maximize_compatibility: true,
         }
@@ -397,7 +400,7 @@ impl SaveOpts {
             tga_bits: tga_bits_param(p, cmd)?,
             dpx_bits: dpx_bits_param(p, cmd)?,
             tiff_compression: tiff_compression_param(p, cmd)?,
-            dds: dds_param(p, cmd)?.unwrap_or_default(),
+            dds: dds_param(p, cmd)?,
             image_previews: file_handling.image_previews != crate::prefs::Ask::Never,
             psd_maximize_compatibility: file_handling.maximize_psd_compatibility != crate::prefs::Ask::Never,
         })
@@ -476,28 +479,148 @@ pub fn dpx_bits_param(p: &Value, cmd: &str) -> Result<Option<photocraft_io::DpxB
     }
 }
 
-/// The DDS options in `p`: `"ddsCompression": "none" | "bc1" | "bc2" | "bc3"` (or the DXT names)
-/// and `"ddsMipmaps": bool`. `None` when neither is given (Save As then asks); either alone
-/// leaves the other at its default (uncompressed, no mipmaps). Anything else is a bad parameter
-/// of command `cmd`.
+/// The DDS options in `p`: `"ddsCompression": "none" | "bc1" | "bc1a" | "bc2" | "bc3" | "bc4" |
+/// "bc5" | "bc7" | "a8"` (or the DXT/ATI names), `"ddsMipmaps": bool`, `"ddsQuality"`,
+/// `"ddsSrgb"`, `"ddsMipFilter"`, `"ddsMinMipSize"`, `"ddsMaxMipCount"`, `"ddsMipGammaCorrect"`,
+/// `"ddsMipPremultAlpha"`, `"ddsPremultAlpha"`, `"ddsNormalMap"`, `"ddsFlip"` and `"ddsCube"`.
+/// `None` when none is given (Save As then asks); each given key leaves the rest at their
+/// defaults (uncompressed, no mipmaps). Anything else is a bad parameter of command `cmd`.
 pub fn dds_param(p: &Value, cmd: &str) -> Result<Option<photocraft_io::DdsOptions>> {
     let bad = |msg: String| EngineError::BadParams { cmd: cmd.into(), msg };
     let compression = match p.get("ddsCompression") {
         None | Some(Value::Null) => None,
-        Some(v) => Some(
-            v.as_str()
-                .and_then(photocraft_io::DdsCompression::from_name)
-                .ok_or_else(|| bad(format!("`ddsCompression` must be \"none\", \"bc1\", \"bc2\" or \"bc3\", got {v}")))?,
-        ),
+        Some(v) => Some(v.as_str().and_then(photocraft_io::DdsCompression::from_name).ok_or_else(|| {
+            bad(format!("`ddsCompression` must be \"none\", \"bc1\", \"bc1a\", \"bc2\", \"bc3\", \"bc4\", \"bc5\", \"bc7\" or \"a8\", got {v}"))
+        })?),
     };
     let mipmaps = match p.get("ddsMipmaps") {
         None | Some(Value::Null) => None,
         Some(v) => Some(v.as_bool().ok_or_else(|| bad(format!("`ddsMipmaps` must be true or false, got {v}")))?),
     };
-    if compression.is_none() && mipmaps.is_none() {
+    let quality = match p.get("ddsQuality") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_str()
+                .and_then(photocraft_io::DdsQuality::from_name)
+                .ok_or_else(|| bad(format!("`ddsQuality` must be \"fastest\", \"normal\", \"production\" or \"highest\", got {v}")))?,
+        ),
+    };
+    let srgb = match p.get("ddsSrgb") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_bool().ok_or_else(|| bad(format!("`ddsSrgb` must be true or false, got {v}")))?),
+    };
+    let mip_filter = match p.get("ddsMipFilter") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_str()
+                .and_then(photocraft_io::DdsMipFilter::from_name)
+                .ok_or_else(|| bad(format!("`ddsMipFilter` must be \"box\", \"triangle\", \"min\", \"max\", \"kaiser\" or \"mitchell\", got {v}")))?,
+        ),
+    };
+    let u32_param = |key: &str| -> Result<Option<u32>> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => {
+                let n = v.as_f64().and_then(|n| (n >= 0.0 && n <= f64::from(u32::MAX) && n.fract() == 0.0).then_some(n as u32));
+                Some(n.ok_or_else(|| bad(format!("`{key}` must be a whole number ≥ 0, got {v}")))).transpose()
+            }
+        }
+    };
+    let bool_param = |key: &str| -> Result<Option<bool>> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => Some(v.as_bool().ok_or_else(|| bad(format!("`{key}` must be true or false, got {v}")))).transpose(),
+        }
+    };
+    let (min_mip_size, max_mip_count) = (u32_param("ddsMinMipSize")?, u32_param("ddsMaxMipCount")?);
+    if min_mip_size == Some(0) {
+        return Err(bad("`ddsMinMipSize` must be 1 or more, got 0".into()));
+    }
+    let cube = match p.get("ddsCube") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_str()
+                .and_then(photocraft_io::DdsCubeMap::from_name)
+                .ok_or_else(|| bad(format!("`ddsCube` must be \"off\", \"layers\" or \"cross\", got {v}")))?,
+        ),
+    };
+    let (mip_gamma_correct, mip_premult_alpha, export_premult_alpha, normal_map, flip) = (
+        bool_param("ddsMipGammaCorrect")?,
+        bool_param("ddsMipPremultAlpha")?,
+        bool_param("ddsPremultAlpha")?,
+        bool_param("ddsNormalMap")?,
+        bool_param("ddsFlip")?,
+    );
+    if compression.is_none()
+        && mipmaps.is_none()
+        && quality.is_none()
+        && srgb.is_none()
+        && mip_filter.is_none()
+        && min_mip_size.is_none()
+        && max_mip_count.is_none()
+        && mip_gamma_correct.is_none()
+        && mip_premult_alpha.is_none()
+        && export_premult_alpha.is_none()
+        && normal_map.is_none()
+        && flip.is_none()
+        && cube.is_none()
+    {
         return Ok(None);
     }
-    Ok(Some(photocraft_io::DdsOptions { compression: compression.unwrap_or_default(), mipmaps: mipmaps.unwrap_or(false) }))
+    Ok(Some(photocraft_io::DdsOptions {
+        compression: compression.unwrap_or_default(),
+        mipmaps: mipmaps.unwrap_or(false),
+        quality: quality.unwrap_or_default(),
+        srgb: srgb.unwrap_or(false),
+        mip_filter: mip_filter.unwrap_or_default(),
+        min_mip_size: min_mip_size.unwrap_or(1),
+        max_mip_count: max_mip_count.unwrap_or(0),
+        mip_gamma_correct: mip_gamma_correct.unwrap_or(true),
+        mip_premult_alpha: mip_premult_alpha.unwrap_or(true),
+        export_premult_alpha: export_premult_alpha.unwrap_or(false),
+        normal_map: normal_map.unwrap_or(false),
+        flip: flip.unwrap_or(false),
+        cube: cube.unwrap_or_default(),
+    }))
+}
+
+/// The DDS import answers in `p`: `"ddsAlphaChannel": bool` (the texture's alpha opens as an
+/// "Alpha 1" document channel, not the layer's transparency), `"ddsMipmaps": bool` (each mip
+/// level a layer), `"ddsFlip": bool` (rows open bottom-up) and `"ddsCube": "layers" |
+/// "cross" | "off"` (a cubemap opens as a layer per face, the cross-layout sheet, or only
+/// the +X face; unset, layers — nothing is dropped). `None` when none is given — File ›
+/// Open's DDS prompt then asks.
+pub fn dds_import_param(p: &Value, cmd: &str) -> Result<Option<photocraft_io::DdsImport>> {
+    let bad = |msg: String| EngineError::BadParams { cmd: cmd.into(), msg };
+    let channel = match p.get("ddsAlphaChannel") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_bool().ok_or_else(|| bad(format!("`ddsAlphaChannel` must be true or false, got {v}")))?),
+    };
+    let mips = match p.get("ddsMipmaps") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_bool().ok_or_else(|| bad(format!("`ddsMipmaps` must be true or false, got {v}")))?),
+    };
+    let flip = match p.get("ddsFlip") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_bool().ok_or_else(|| bad(format!("`ddsFlip` must be true or false, got {v}")))?),
+    };
+    let cube = match p.get("ddsCube") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_str()
+                .and_then(photocraft_io::DdsCubeMap::from_name)
+                .ok_or_else(|| bad(format!("`ddsCube` must be \"off\", \"layers\" or \"cross\", got {v}")))?,
+        ),
+    };
+    if channel.is_none() && mips.is_none() && flip.is_none() && cube.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(photocraft_io::DdsImport {
+        alpha_as_channel: channel.unwrap_or(false),
+        mips_as_layers: mips.unwrap_or(false),
+        flip: flip.unwrap_or(false),
+        cube: cube.unwrap_or(photocraft_io::DdsCubeMap::Layers),
+    }))
 }
 
 /// Encodes `doc` for `path`'s extension.
@@ -522,7 +645,9 @@ pub(crate) fn encode(doc: &Document, path: &str, save: impl Into<SaveOpts>) -> R
     if let Some(c) = save.tiff_compression {
         opts.encode.tiff_compression = c;
     }
-    opts.encode.dds = save.dds;
+    // No DDS option answered: write the file the way it was opened when that form is
+    // writable (the NVIDIA/Intel plug-ins' match-source default).
+    opts.dds = save.dds;
     if let Some(q) = save.quality {
         let q = jpeg_quality(q);
         opts.encode.jpeg_quality = q;
@@ -685,12 +810,30 @@ fn raw_resolution(ppi: f64, warnings: &[String], doc: &mut Document) {
 }
 
 pub fn open_bytes_as(s: &mut Session, name: &str, bytes: &[u8], as_ext: Option<&str>, path: Option<String>) -> Result<Value> {
+    open_bytes_as_opts(s, name, bytes, as_ext, path, None)
+}
+
+/// [`open_bytes_as`] with the DDS import answers (alpha as channel, mip chain as layers,
+/// flipped rows, cubemap faces) a command's `ddsAlphaChannel`/`ddsMipmaps`/`ddsFlip`/`ddsCube`
+/// params chose; `None` is the plain open.
+pub fn open_bytes_as_opts(
+    s: &mut Session,
+    name: &str,
+    bytes: &[u8],
+    as_ext: Option<&str>,
+    path: Option<String>,
+    dds: Option<photocraft_io::DdsImport>,
+) -> Result<Value> {
     crate::allocation::checkpoint("importing document")?;
     let decode_name = match as_ext {
         Some(ext) => format!("{}.{}", stem(name), ext.trim_start_matches('.')),
         None => name.to_string(),
     };
-    let r = photocraft_io::import(&decode_name, bytes).map_err(|e| EngineError::Other(format!("{decode_name}: {e}")))?;
+    let mut opts = crate::jobs::import_options(s.prefs());
+    if let Some(dds) = dds {
+        opts.dds = dds;
+    }
+    let r = photocraft_io::import_with_options(&decode_name, bytes, &opts).map_err(|e| EngineError::Other(format!("{decode_name}: {e}")))?;
     let mut doc = r.document;
     tag_exr_colorspace(s, &decode_name, &mut doc);
     raw_defaults(s, &r.warnings, &mut doc);
@@ -717,7 +860,7 @@ fn open_as(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path", "file.openAs")?.to_string();
     let bytes = read_file(&path)?;
     let as_ext = p.get("as").or_else(|| p.get("format")).and_then(Value::as_str);
-    open_bytes_as(s, &path, &bytes, as_ext, Some(path.clone()))
+    open_bytes_as_opts(s, &path, &bytes, as_ext, Some(path.clone()), dds_import_param(p, "file.openAs")?)
 }
 
 // ---------- place ----------
@@ -2018,7 +2161,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save a Copy…",
             &["File"],
             Some("Cmd+Alt+S"),
-            r##"{"path":str (format from the extension),"quality":0..12? (JPEG),"jpegFormat":"baseline|optimized|progressive"? (JPEG; default baseline),"layers":bool=true,"overwrite":bool=false (replace the document's own file),"tiffLayers":bool=false (TIFF: keep the layers; flat by default),"tiffCompression":"none|lzw|zip"? (TIFF: image compression; unset, none),"tgaBits":24|32? (TGA: 32 writes the alpha channel, or else the transparency, as the alpha; unset, 32 with an alpha channel or transparency, else 24),"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16),"ddsCompression":"none|bc1|bc2|bc3"="none" (DDS: uncompressed, or block compression; BC1 keeps alpha on or off),"ddsMipmaps":bool=false (DDS: also write the full mip chain)}"##,
+            r##"{"path":str (format from the extension),"quality":0..12? (JPEG),"jpegFormat":"baseline|optimized|progressive"? (JPEG; default baseline),"layers":bool=true,"overwrite":bool=false (replace the document's own file),"tiffLayers":bool=false (TIFF: keep the layers; flat by default),"tiffCompression":"none|lzw|zip"? (TIFF: image compression; unset, none),"tgaBits":24|32? (TGA: 32 writes the alpha channel, or else the transparency, as the alpha; unset, 32 with an alpha channel or transparency, else 24),"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16),"ddsCompression":"none|bc1|bc1a|bc2|bc3|bc4|bc5|bc7|a8"? (DDS: storage; unset, what the file was written with when writable, else none),"ddsMipmaps":bool? (DDS: write the mip chain),"ddsQuality":"fastest|normal|production|highest"? (DDS: BC7 encoder effort),"ddsSrgb":bool? (DDS: tag the texture sRGB; written with the DX10 header),"ddsMipFilter":"box|triangle|min|max|kaiser|mitchell"? (DDS: mip downsample filter),"ddsMinMipSize":px? (DDS: stop the mip chain below this size),"ddsMaxMipCount":n? (DDS: cap mip levels; 0 = no cap),"ddsMipGammaCorrect":bool? (DDS: filter sRGB mips in linear light; default true),"ddsMipPremultAlpha":bool? (DDS: filter mips in premultiplied space; default true),"ddsPremultAlpha":bool? (DDS: store premultiplied alpha),"ddsNormalMap":bool? (DDS: set the normal-map header flag),"ddsFlip":bool? (DDS: write rows bottom-up),"ddsCube":"off|layers|cross"? (DDS: cubemap — the six bottom layers as the +X..-Z faces, or split a 4:3 cross sheet; off keeps a plain texture)}"##,
             native_doc,
             save_a_copy
         ),
@@ -2027,7 +2170,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Open As…",
             &["File"],
             Some("Cmd+Alt+Shift+O"),
-            r##"{"path":str,"as":"psd|png|jpg|tiff|…"? (decode as this format)}"##,
+            r##"{"path":str,"as":"psd|png|jpg|tiff|…"? (decode as this format),"ddsAlphaChannel":bool=false (DDS: the texture's alpha opens as an "Alpha 1" channel, not the layer's transparency),"ddsMipmaps":bool=false (DDS: each mip level a layer),"ddsFlip":bool=false (DDS: open the rows bottom-up),"ddsCube":"layers|cross|off"? (DDS: a cubemap opens a layer per face, the cross-layout sheet, or the +X face only; unset, layers)}"##,
             native,
             open_as
         ),
@@ -2081,7 +2224,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Batch…",
             &["File", "Automate"],
             None,
-            r##"{"steps":[[commandId,params]|{"command":id,"params":{}}…] (a recorded action; a Save, Save As or Save a Copy step marks the document written to output, in this command's format and options: as the save found it if it was closed or another document is active at the end, else as the action leaves it; with no such step, the active document at the end),"input":folder|[paths],"includeSubfolders":bool=false (a folder input also takes the images in its subfolders, up to 32 levels and 100000 files; each result keeps its subfolder under output),"output":folder,"format":"same|png|jpg|psd|tiff|…"="same","quality":0..12?,"jpegFormat":"baseline|optimized|progressive"?,"naming":string? (blank keeps source names; {name}, {serial} padded to 3 digits, {date} as YYYY-MM-DD UTC; extension added automatically),"startingSerial":1..4294967295=1 (input position, including failed inputs),"tiffLayers":bool=false,"tiffCompression":"none|lzw|zip"?,"tgaBits":24|32?,"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16),"ddsCompression":"none|bc1|bc2|bc3"="none" (DDS: uncompressed, or block compression; BC1 keeps alpha on or off),"ddsMipmaps":bool=false (DDS: also write the full mip chain),"calledActions":[{"name","steps"}…]? (the actions Play Action steps call; default: the session's)} → {files, errors} (an input whose output name was already written in the run goes to errors)"##,
+            r##"{"steps":[[commandId,params]|{"command":id,"params":{}}…] (a recorded action; a Save, Save As or Save a Copy step marks the document written to output, in this command's format and options: as the save found it if it was closed or another document is active at the end, else as the action leaves it; with no such step, the active document at the end),"input":folder|[paths],"includeSubfolders":bool=false (a folder input also takes the images in its subfolders, up to 32 levels and 100000 files; each result keeps its subfolder under output),"output":folder,"format":"same|png|jpg|psd|tiff|…"="same","quality":0..12?,"jpegFormat":"baseline|optimized|progressive"?,"naming":string? (blank keeps source names; {name}, {serial} padded to 3 digits, {date} as YYYY-MM-DD UTC; extension added automatically),"startingSerial":1..4294967295=1 (input position, including failed inputs),"tiffLayers":bool=false,"tiffCompression":"none|lzw|zip"?,"tgaBits":24|32?,"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16),"ddsCompression":"none|bc1|bc1a|bc2|bc3|bc4|bc5|bc7|a8"? (DDS: storage; unset, what the file was written with when writable, else none),"ddsMipmaps":bool? (DDS: write the mip chain),"ddsQuality":"fastest|normal|production|highest"? (DDS: BC7 encoder effort),"ddsSrgb":bool? (DDS: tag the texture sRGB; written with the DX10 header),"ddsMipFilter":"box|triangle|min|max|kaiser|mitchell"? (DDS: mip downsample filter),"ddsMinMipSize":px? (DDS: stop the mip chain below this size),"ddsMaxMipCount":n? (DDS: cap mip levels; 0 = no cap),"ddsMipGammaCorrect":bool? (DDS: filter sRGB mips in linear light; default true),"ddsMipPremultAlpha":bool? (DDS: filter mips in premultiplied space; default true),"ddsPremultAlpha":bool? (DDS: store premultiplied alpha),"ddsNormalMap":bool? (DDS: set the normal-map header flag),"ddsFlip":bool? (DDS: write rows bottom-up),"ddsCube":"off|layers|cross"? (DDS: cubemap — the six bottom layers as the +X..-Z faces, or split a 4:3 cross sheet; off keeps a plain texture),"calledActions":[{"name","steps"}…]? (the actions Play Action steps call; default: the session's)} → {files, errors} (an input whose output name was already written in the run goes to errors)"##,
             native,
             batch
         ),
@@ -2090,7 +2233,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Image Processor…",
             &["File", "Scripts"],
             None,
-            r##"{"input":folder|[paths],"includeSubfolders":bool=false (a folder input also takes the images in its subfolders, up to 32 levels and 100000 files; each result keeps its subfolder under output),"output":folder,"format":"jpg|png|psd|tiff|…"="jpg","quality":0..12=8,"jpegFormat":"baseline|optimized|progressive"?,"tiffLayers":bool=false,"tiffCompression":"none|lzw|zip"?,"tgaBits":24|32?,"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16),"ddsCompression":"none|bc1|bc2|bc3"="none" (DDS: uncompressed, or block compression; BC1 keeps alpha on or off),"ddsMipmaps":bool=false (DDS: also write the full mip chain),"width":px?,"height":px? (fit, never enlarge),"convertToSrgb":bool=false} → {files, errors} (an input whose output name was already written in the run goes to errors)"##,
+            r##"{"input":folder|[paths],"includeSubfolders":bool=false (a folder input also takes the images in its subfolders, up to 32 levels and 100000 files; each result keeps its subfolder under output),"output":folder,"format":"jpg|png|psd|tiff|…"="jpg","quality":0..12=8,"jpegFormat":"baseline|optimized|progressive"?,"tiffLayers":bool=false,"tiffCompression":"none|lzw|zip"?,"tgaBits":24|32?,"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16),"ddsCompression":"none|bc1|bc1a|bc2|bc3|bc4|bc5|bc7|a8"? (DDS: storage; unset, what the file was written with when writable, else none),"ddsMipmaps":bool? (DDS: write the mip chain),"ddsQuality":"fastest|normal|production|highest"? (DDS: BC7 encoder effort),"ddsSrgb":bool? (DDS: tag the texture sRGB; written with the DX10 header),"ddsMipFilter":"box|triangle|min|max|kaiser|mitchell"? (DDS: mip downsample filter),"ddsMinMipSize":px? (DDS: stop the mip chain below this size),"ddsMaxMipCount":n? (DDS: cap mip levels; 0 = no cap),"ddsMipGammaCorrect":bool? (DDS: filter sRGB mips in linear light; default true),"ddsMipPremultAlpha":bool? (DDS: filter mips in premultiplied space; default true),"ddsPremultAlpha":bool? (DDS: store premultiplied alpha),"ddsNormalMap":bool? (DDS: set the normal-map header flag),"ddsFlip":bool? (DDS: write rows bottom-up),"ddsCube":"off|layers|cross"? (DDS: cubemap — the six bottom layers as the +X..-Z faces, or split a 4:3 cross sheet; off keeps a plain texture),"width":px?,"height":px? (fit, never enlarge),"convertToSrgb":bool=false} → {files, errors} (an input whose output name was already written in the run goes to errors)"##,
             native,
             image_processor
         ),
@@ -2118,7 +2261,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Layers to Files…",
             &["File", "Export"],
             None,
-            r##"{"dir":folder,"format":"png|jpg|psd|tiff|…"="png","prefix":str=document name,"visibleOnly":bool=true,"quality":0..12?,"jpegFormat":"baseline|optimized|progressive"?,"tiffLayers":bool=false,"tiffCompression":"none|lzw|zip"?,"tgaBits":24|32?,"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16),"ddsCompression":"none|bc1|bc2|bc3"="none" (DDS: uncompressed, or block compression; BC1 keeps alpha on or off),"ddsMipmaps":bool=false (DDS: also write the full mip chain)} → {files}"##,
+            r##"{"dir":folder,"format":"png|jpg|psd|tiff|…"="png","prefix":str=document name,"visibleOnly":bool=true,"quality":0..12?,"jpegFormat":"baseline|optimized|progressive"?,"tiffLayers":bool=false,"tiffCompression":"none|lzw|zip"?,"tgaBits":24|32?,"dpxBits":8|10|12|16? (DPX: bits per sample; unset, 8 for an 8-bit document, else 16),"ddsCompression":"none|bc1|bc1a|bc2|bc3|bc4|bc5|bc7|a8"? (DDS: storage; unset, what the file was written with when writable, else none),"ddsMipmaps":bool? (DDS: write the mip chain),"ddsQuality":"fastest|normal|production|highest"? (DDS: BC7 encoder effort),"ddsSrgb":bool? (DDS: tag the texture sRGB; written with the DX10 header),"ddsMipFilter":"box|triangle|min|max|kaiser|mitchell"? (DDS: mip downsample filter),"ddsMinMipSize":px? (DDS: stop the mip chain below this size),"ddsMaxMipCount":n? (DDS: cap mip levels; 0 = no cap),"ddsMipGammaCorrect":bool? (DDS: filter sRGB mips in linear light; default true),"ddsMipPremultAlpha":bool? (DDS: filter mips in premultiplied space; default true),"ddsPremultAlpha":bool? (DDS: store premultiplied alpha),"ddsNormalMap":bool? (DDS: set the normal-map header flag),"ddsFlip":bool? (DDS: write rows bottom-up),"ddsCube":"off|layers|cross"? (DDS: cubemap — the six bottom layers as the +X..-Z faces, or split a 4:3 cross sheet; off keeps a plain texture)} → {files}"##,
             native_doc,
             layers_to_files
         ),

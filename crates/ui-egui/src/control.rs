@@ -1318,9 +1318,13 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
                     Some(read) => read(path),
                     None => Err("automation read authority is not configured".into()),
                 };
+                let dds = match crate::dds_import_ui::params(p) {
+                    Ok(d) => d,
+                    Err(e) => return err(e),
+                };
                 wrap(opened.and_then(|(name, bytes)| {
                     let name = app.open_name(&name);
-                    let warnings = app.open_automation_bytes(&name, &bytes)?;
+                    let warnings = app.open_automation_bytes_opts(&name, &bytes, dds)?;
                     // Brushes/gradients go to the preset libraries: no document, no Open Recent entry.
                     if !crate::preset_files_ui::is_preset_file(&name) {
                         app.opened_from(path);
@@ -2639,7 +2643,7 @@ mod tests {
         use photocraft_io::{DdsCompression, DdsOptions};
         use std::cell::RefCell;
         use std::rc::Rc;
-        let asked: Rc<RefCell<Vec<DdsOptions>>> = Rc::default();
+        let asked: Rc<RefCell<Vec<Option<DdsOptions>>>> = Rc::default();
         let a = asked.clone();
         let services = crate::Services {
             export: Some(Box::new(move |_d: &photocraft_doc::Document, _p: &str, s: &crate::ExportSettings| {
@@ -2657,7 +2661,8 @@ mod tests {
             assert_eq!(r["result"]["path"], params["path"], "{r}");
             assert!(app.dds_options.is_none(), "automation saves never prompt");
         }
-        assert_eq!(*asked.borrow(), [DdsOptions::default(), DdsOptions { compression: DdsCompression::Bc1, mipmaps: true }]);
+        // No DDS params asks for the source's own encoding (`None`), not uncompressed.
+        assert_eq!(*asked.borrow(), [None, Some(DdsOptions { compression: DdsCompression::Bc1, mipmaps: true, ..Default::default() })]);
         let r = call(&mut app, &ctx, "app.save", json!({"path": "c.dds", "ddsCompression": "bc9"}));
         assert!(r["error"].as_str().unwrap().contains("ddsCompression"), "{r}");
         assert_eq!(asked.borrow().len(), 2, "a bad ddsCompression writes nothing");

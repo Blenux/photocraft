@@ -2,25 +2,40 @@
 //! `ddsCompression` and `ddsMipmaps` that skip it, and action recording and playback (#1327).
 use super::*;
 use crate::{FileDialogAnswer, dds_options_ui};
-use egui_kittest::kittest::Queryable;
+use egui::accesskit::Role;
+use egui_kittest::kittest::{NodeT, Queryable};
 use photocraft_io::{DdsCompression, DdsOptions};
 use std::{cell::RefCell, rc::Rc};
 
 /// Each write: the path, and the DDS options the export was asked for.
 type Writes = Rc<RefCell<Vec<(String, DdsOptions)>>>;
 
-const PLAIN: DdsOptions = DdsOptions { compression: DdsCompression::None, mipmaps: false };
+fn plain() -> DdsOptions {
+    DdsOptions::default()
+}
+
+/// Pick `item` from the dropdown showing `value` (the node's `value`, not its `label`, holds
+/// the shown text).
+fn pick_from_combo(h: &mut Prompted, value: &str, item: &str) {
+    h.query_all_by_role(Role::ComboBox)
+        .find(|n| n.accesskit_node().value().as_deref() == Some(value))
+        .unwrap_or_else(|| panic!("no dropdown showing {value:?}"))
+        .click();
+    h.run_steps(2);
+    h.get_by_label(item).click();
+    h.run_steps(6);
+}
 
 /// One 8×8 RGB document whose exports record their DDS options, in a harness showing DDS Options
 /// and answering a save dialog with `to`.
 fn dds_app(to: &str) -> (Prompted, Writes) {
     let mut app = app_with_docs(1);
     let writes: Writes = Rc::default();
-    let (asked, written) = (Rc::new(RefCell::new(PLAIN)), writes.clone());
+    let (asked, written) = (Rc::new(RefCell::new(plain())), writes.clone());
     let seen = asked.clone();
     app.services.file_dialog = Some(crate::file_dialog::fake(vec![Some(FileDialogAnswer::SaveTo(to.into()))]).0);
     app.services.export = Some(Box::new(move |_, _, settings| {
-        *seen.borrow_mut() = settings.dds;
+        *seen.borrow_mut() = settings.dds.unwrap_or_default();
         Ok((Vec::new(), Vec::new()))
     }));
     app.services.write = Some(Box::new(move |path, _| {
@@ -46,17 +61,16 @@ fn dds_app(to: &str) -> (Prompted, Writes) {
 fn save_as_to_a_dds_texture_asks_for_its_compression() {
     let (mut h, writes) = dds_app("unused.dds");
     h.state_mut().save_as(Some("t.dds".into())).unwrap();
-    h.run_steps(2);
-    assert_eq!(h.state().dds_options.as_ref().map(|p| (p.options, p.copy)), Some((PLAIN, false)));
+    h.run_steps(5);
+    assert_eq!(h.state().dds_options.as_ref().map(|p| (p.options, p.copy)), Some((plain(), false)));
     assert!(writes.borrow().is_empty(), "nothing is written before the answer");
     assert!(h.state_mut().save_as(Some("other.dds".into())).is_err(), "one save at a time");
-    h.get_by_label("BC3 / DXT5").click();
-    h.run_steps(2);
+    pick_from_combo(&mut h, "None", "BC3 / DXT5");
     h.get_by_label("Generate Mipmaps").click();
-    h.run_steps(2);
+    h.run_steps(6); // the mip block grows the dialog; let node bounds settle before clicking
     h.get_by_label("OK").click();
     h.run_steps(3);
-    let chosen = DdsOptions { compression: DdsCompression::Bc3, mipmaps: true };
+    let chosen = DdsOptions { compression: DdsCompression::Bc3, mipmaps: true, ..Default::default() };
     assert_eq!(writes.borrow().as_slice(), &[("t.dds".to_string(), chosen)]);
     assert!(h.state().dds_options.is_none());
     assert_eq!(h.state().session.active().unwrap().path.as_deref(), Some("t.dds"));
@@ -80,7 +94,7 @@ fn scripted_dds_options_and_other_formats_skip_the_prompt() {
     crate::menus::invoke(h.state_mut(), &ctx, "file.saveAs", json!({"path": "s.dds", "ddsCompression": "bc1"})).unwrap();
     crate::menus::invoke(h.state_mut(), &ctx, "file.saveAs", json!({"path": "m.dds", "ddsMipmaps": true})).unwrap();
     assert!(h.state().dds_options.is_none());
-    for bad in [json!({"ddsCompression": "bc7"}), json!({"ddsMipmaps": 1})] {
+    for bad in [json!({"ddsCompression": "bc6h"}), json!({"ddsMipmaps": 1})] {
         let mut p = bad.clone();
         p["path"] = json!("bad.dds");
         assert!(crate::menus::invoke(h.state_mut(), &ctx, "file.saveAs", p).is_err(), "{bad}");
@@ -90,9 +104,9 @@ fn scripted_dds_options_and_other_formats_skip_the_prompt() {
     assert_eq!(
         writes.borrow().as_slice(),
         &[
-            ("s.dds".to_string(), DdsOptions { compression: DdsCompression::Bc1, mipmaps: false }),
-            ("m.dds".to_string(), DdsOptions { compression: DdsCompression::None, mipmaps: true }),
-            ("p.png".to_string(), PLAIN),
+            ("s.dds".to_string(), DdsOptions { compression: DdsCompression::Bc1, mipmaps: false, ..Default::default() }),
+            ("m.dds".to_string(), DdsOptions { compression: DdsCompression::None, mipmaps: true, ..Default::default() }),
+            ("p.png".to_string(), plain()),
         ]
     );
 }
@@ -106,11 +120,11 @@ fn save_a_copy_to_a_dds_texture_asks_and_keeps_the_document_unsaved() {
     let ctx = h.ctx.clone();
     crate::menus::invoke(h.state_mut(), &ctx, "file.saveACopy", json!({})).unwrap();
     h.run_steps(3);
-    assert_eq!(h.state().dds_options.as_ref().map(|p| (p.options, p.copy)), Some((PLAIN, true)));
+    assert_eq!(h.state().dds_options.as_ref().map(|p| (p.options, p.copy)), Some((plain(), true)));
     assert!(dds_options_ui::park(h.state_mut(), "other.dds".into(), false, "file.saveAs").is_err(), "the waiting prompt is kept");
     h.key_press(Key::Enter);
     h.run_steps(3);
-    assert_eq!(writes.borrow().as_slice(), &[("copy.dds".to_string(), PLAIN)]);
+    assert_eq!(writes.borrow().as_slice(), &[("copy.dds".to_string(), plain())]);
     let st = h.state().session.active().unwrap();
     assert!(st.is_dirty());
     assert_eq!(st.path, None);
@@ -124,13 +138,12 @@ fn recorded_dds_saves_keep_their_options_and_replay_without_asking() {
     let ctx = h.ctx.clone();
     h.state_mut().run("actions.record", json!({})).unwrap();
     h.state_mut().save_as(Some("t.dds".into())).unwrap();
-    h.run_steps(2);
-    h.get_by_label("BC1 / DXT1").click();
-    h.run_steps(2);
+    h.run_steps(5);
+    pick_from_combo(&mut h, "None", "BC1 / DXT1");
     h.get_by_label("OK").click();
     h.run_steps(3);
     crate::menus::invoke(h.state_mut(), &ctx, "file.saveACopy", json!({})).unwrap();
-    h.run_steps(3);
+    h.run_steps(5);
     h.get_by_label("Generate Mipmaps").click();
     h.run_steps(2);
     h.key_press(Key::Enter);
@@ -138,18 +151,24 @@ fn recorded_dds_saves_keep_their_options_and_replay_without_asking() {
     crate::menus::invoke(h.state_mut(), &ctx, "file.saveAs", json!({"path": "s.dds", "ddsCompression": "bc2"})).unwrap();
     h.state_mut().run("actions.stop", json!({})).unwrap();
     let want = [
-        ("t.dds".to_string(), DdsOptions { compression: DdsCompression::Bc1, mipmaps: false }),
-        ("copy.dds".to_string(), DdsOptions { compression: DdsCompression::None, mipmaps: true }),
-        ("s.dds".to_string(), DdsOptions { compression: DdsCompression::Bc2, mipmaps: false }),
+        ("t.dds".to_string(), DdsOptions { compression: DdsCompression::Bc1, mipmaps: false, ..Default::default() }),
+        ("copy.dds".to_string(), DdsOptions { compression: DdsCompression::None, mipmaps: true, ..Default::default() }),
+        ("s.dds".to_string(), DdsOptions { compression: DdsCompression::Bc2, mipmaps: false, ..Default::default() }),
     ];
     assert_eq!(writes.borrow().as_slice(), &want);
     let steps = &h.state().session.actions.list[0].steps;
+    let step = |path: &str, compression: &str, mipmaps: bool| {
+        json!({"path": path, "ddsCompression": compression, "ddsMipmaps": mipmaps, "ddsQuality": "highest",
+            "ddsSrgb": false, "ddsMipFilter": "box", "ddsMinMipSize": 1, "ddsMaxMipCount": 0,
+            "ddsMipGammaCorrect": true, "ddsMipPremultAlpha": true, "ddsPremultAlpha": false,
+            "ddsNormalMap": false, "ddsFlip": false, "ddsCube": "off"})
+    };
     assert_eq!(
         steps,
         &[
-            ("file.saveAs".into(), json!({"path": "t.dds", "ddsCompression": "bc1", "ddsMipmaps": false})),
-            ("file.saveACopy".into(), json!({"path": "copy.dds", "ddsCompression": "none", "ddsMipmaps": true})),
-            ("file.saveAs".into(), json!({"path": "s.dds", "ddsCompression": "bc2", "ddsMipmaps": false}))
+            ("file.saveAs".into(), step("t.dds", "bc1", false)),
+            ("file.saveACopy".into(), step("copy.dds", "none", true)),
+            ("file.saveAs".into(), step("s.dds", "bc2", false))
         ]
     );
     writes.borrow_mut().clear();
@@ -170,10 +189,9 @@ fn recorded_plain_save_of_a_dds_texture_keeps_its_options() {
     assert_eq!(h.state().session.active().unwrap().path.as_deref(), Some("own.dds"));
     h.state_mut().run("actions.record", json!({})).unwrap();
     crate::menus::invoke(h.state_mut(), &ctx, "file.save", json!({})).unwrap();
-    h.run_steps(3);
+    h.run_steps(5);
     assert!(h.state().dds_options.is_some(), "confirming its own texture asks DDS Options");
-    h.get_by_label("BC1 / DXT1").click();
-    h.run_steps(2);
+    pick_from_combo(&mut h, "None", "BC1 / DXT1");
     h.get_by_label("OK").click();
     h.run_steps(3);
     h.state_mut().services.file_dialog = Some(crate::file_dialog::fake(vec![Some(FileDialogAnswer::SaveTo("own.dds".into()))]).0);
@@ -181,17 +199,17 @@ fn recorded_plain_save_of_a_dds_texture_keeps_its_options() {
     h.run_steps(3);
     assert!(h.state().dds_options.is_none(), "scripted options don't ask");
     h.state_mut().run("actions.stop", json!({})).unwrap();
-    let bc1 = DdsOptions { compression: DdsCompression::Bc1, mipmaps: false };
-    let bc3 = DdsOptions { compression: DdsCompression::Bc3, mipmaps: true };
+    let bc1 = DdsOptions { compression: DdsCompression::Bc1, mipmaps: false, ..Default::default() };
+    let bc3 = DdsOptions { compression: DdsCompression::Bc3, mipmaps: true, ..Default::default() };
     assert_eq!(&writes.borrow()[1..], &[("own.dds".to_string(), bc1), ("own.dds".to_string(), bc3)]);
     let steps = &h.state().session.actions.list[0].steps;
-    assert_eq!(
-        steps,
-        &[
-            ("file.save".into(), json!({"ddsCompression": "bc1", "ddsMipmaps": false})),
-            ("file.save".into(), json!({"ddsCompression": "bc3", "ddsMipmaps": true}))
-        ]
-    );
+    let step = |compression: &str, mipmaps: bool| {
+        json!({"ddsCompression": compression, "ddsMipmaps": mipmaps, "ddsQuality": "highest",
+            "ddsSrgb": false, "ddsMipFilter": "box", "ddsMinMipSize": 1, "ddsMaxMipCount": 0,
+            "ddsMipGammaCorrect": true, "ddsMipPremultAlpha": true, "ddsPremultAlpha": false,
+            "ddsNormalMap": false, "ddsFlip": false, "ddsCube": "off"})
+    };
+    assert_eq!(steps, &[("file.save".into(), step("bc1", false)), ("file.save".into(), step("bc3", true))]);
     crate::menus::invoke(h.state_mut(), &ctx, "file.saveAs", json!({"path": "other.dds", "ddsCompression": "none"})).unwrap();
     writes.borrow_mut().clear();
     let played = h.state_mut().run("actions.play", json!({"action": 0})).unwrap();

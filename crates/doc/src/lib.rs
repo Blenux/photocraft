@@ -928,7 +928,7 @@ pub struct Document {
 /// The encoder settings a document's file was opened or saved with: what File › Save and the
 /// Save As defaults reuse for that format. Empty for a new document or a file without lossy
 /// options. Qualities are on the codecs' 1–100 scale.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct FileEncoding {
     /// JPEG quality (estimated from the file's quantisation tables on open).
@@ -945,12 +945,33 @@ pub struct FileEncoding {
     /// side by side; saving a stereo PNG keeps this eye-order mark (#6063).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub png_stereo: Option<u8>,
+    /// DDS: the compression the file was opened with (the `DdsCompression::name` token —
+    /// `"bc1"`…`"bc7"`, `"a8"`, `"bc1a"` or `"none"`), so a save matches the source when no
+    /// option answers. `None` when the source encoding isn't writable (premultiplied,
+    /// RXGB/YCoCg, float or signed variants).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dds_compression: Option<String>,
+    /// DDS: the source's DX10 header marked it sRGB.
+    #[serde(default, skip_serializing_if = "crate::is_false")]
+    pub dds_srgb: bool,
+    /// DDS: the source stored a mip chain.
+    #[serde(default, skip_serializing_if = "crate::is_false")]
+    pub dds_mipmaps: bool,
+    /// DDS: the source is a cubemap — a save that asks for nothing writes one back when the
+    /// document still holds six face layers.
+    #[serde(default, skip_serializing_if = "crate::is_false")]
+    pub dds_cube: bool,
 }
 
 impl FileEncoding {
     pub fn is_empty(&self) -> bool {
         *self == FileEncoding::default()
     }
+}
+
+/// Serde's `skip_serializing_if` for `false` fields.
+pub fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Where a layer lives in the tree: indices from the root down.

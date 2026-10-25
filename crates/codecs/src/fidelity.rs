@@ -173,8 +173,19 @@ pub(crate) fn plan(image: &Image, format: Format, opts: &EncodeOptions) -> Plan 
         },
         // CIELab has no float form: float Lab is written with 16 bits.
         Format::Tiff if layout.is_lab() && sample.is_float() => Plan { layout: pick_layout(layout, c.layouts, c.alpha), sample: SampleType::U16 },
-        // A block-compressed DDS stores RGBA whatever the source; uncompressed keeps gray and RGB.
-        Format::Dds if opts.dds.compression.is_block() => Plan { layout: ChannelLayout::Rgba, sample: SampleType::U8 },
+        // A8 stores only the alpha: planning gray+alpha warns about the dropped colour
+        // (and its alpha is what the file keeps).
+        Format::Dds if opts.dds.compression == DdsCompression::A8 => Plan { layout: ChannelLayout::GrayA, sample: SampleType::U8 },
+        // A block-compressed DDS takes the channels it stores — BC4 one, BC5 two, the rest
+        // RGBA whatever the source; uncompressed keeps gray and RGB.
+        Format::Dds if opts.dds.compression.is_block() => Plan {
+            layout: match opts.dds.compression {
+                DdsCompression::Bc4 => ChannelLayout::Gray,
+                DdsCompression::Bc5 => ChannelLayout::GrayA,
+                _ => ChannelLayout::Rgba,
+            },
+            sample: SampleType::U8,
+        },
         _ => Plan { layout: pick_layout(layout, c.layouts, c.alpha), sample: pick_sample(sample, c.depths) },
     }
 }
@@ -227,7 +238,7 @@ pub fn fidelity_warnings_with(image: &Image, format: Format, opts: &EncodeOption
     if sl.has_alpha() && !p.layout.has_alpha() && image.has_translucency() {
         w.push(W::AlphaDiscarded);
     }
-    let binary_alpha = format == Format::Gif || (format == Format::Dds && opts.dds.compression == DdsCompression::Bc1);
+    let binary_alpha = format == Format::Gif || (format == Format::Dds && matches!(opts.dds.compression, DdsCompression::Bc1 | DdsCompression::Bc1a));
     if binary_alpha && p.layout.has_alpha() && image.has_translucency() {
         w.push(W::AlphaBinarized);
     }

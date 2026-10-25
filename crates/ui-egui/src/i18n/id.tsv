@@ -3387,7 +3387,40 @@ curves	Smooth	Haluskan
 # DDS Options (#1327)
 	DDS Options	Opsi DDS
 	Compression	Kompresi
+	A8 / alpha only	A8 / hanya alfa
 	Generate Mipmaps	Buat mipmap
+	Box	Kotak
+	Min	Min.
+	Max	Maks.
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	Tercepat
+	Production	Produksi
+	Highest	Tertinggi
+	Filter in linear light	Filter dalam cahaya linier
+	Filter premultiplied (no alpha bleed)	Filter terpremultiply (tanpa rembes alfa)
+	Premultiplied alpha	Alfa terpremultiply
+	Normal map	Peta normal
+	Flip vertically	Balik vertikal
+	Stop at	Berhenti di
+	px; at most	px; maksimal
+	levels	level
+	Cubemap	Cubemap
+	Faces from layers	Sisi dari lapisan
+
+# DDS Import (#8632)
+	DDS Import	Impor DDS
+	Load transparency as alpha channel	Muat transparansi sebagai kanal alfa
+	Mipmaps as separate layers	Mipmap sebagai lapisan terpisah
+	Open cancelled	Buka dibatalkan
+	Open failed: {error}	Gagal membuka: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Sisi sebagai lapisan
+	Cross-layout sheet	Lembar tata letak silang
+	+X face only	Hanya sisi +X
+	Uncompressed	Tidak dikompresi
+@plural	{n} mip level|{n} mip levels	{n} level mip
+@plural	{n} face|{n} faces	{n} sisi
 
 # Color Table (.act) dialog
 	There is no color table to save.	Tidak ada tabel warna untuk disimpan.

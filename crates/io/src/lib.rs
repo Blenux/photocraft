@@ -77,14 +77,14 @@ pub mod vector_map;
 mod xcf;
 
 use photocraft_codecs::{CodecError, EncodeOptions};
-pub use photocraft_codecs::{DdsCompression, DdsOptions, DpxBits};
+pub use photocraft_codecs::{DdsCompression, DdsCubeMap, DdsImport, DdsInfo, DdsMipFilter, DdsOptions, DdsQuality, DpxBits};
 use photocraft_doc::{Adjustment, Document, Layer, LayerContent};
 use photocraft_psd::{PsdError, PsdFile};
 
 pub use adjust_map::ADJUSTMENT_KEYS;
 pub use flat::{
-    DEFAULT_LOSSY_WEBP_QUALITY, apply_file_encoding, document_to_image, file_encoding, import_gif_frames, import_tiff_page, import_webp_frames,
-    tga_alpha_channel_to_transparency, tga_default_bits,
+    DEFAULT_LOSSY_WEBP_QUALITY, apply_file_encoding, dds_cross_sheet, dds_face_layers_ok, dds_source_options, document_to_image, file_encoding,
+    import_gif_frames, import_tiff_page, import_webp_frames, tga_alpha_channel_to_transparency, tga_default_bits,
 };
 pub use psd_export::{PsdExportOptions, document_to_psd, document_to_psd_with};
 pub use psd_import::{psd_to_document, psd_to_document_with};
@@ -221,6 +221,12 @@ pub struct ExportOptions {
     /// Targa: bits per pixel of an RGB file. `None` writes 32 when the document has an alpha
     /// channel or transparency, else 24; Save As asks, starting at [`tga_default_bits`].
     pub tga_bits: Option<TgaBits>,
+    /// DDS compression, mip chain and flag choices. `None` keeps an explicitly set
+    /// [`EncodeOptions::dds`] that differs from the default, else writes what the document's
+    /// own file was opened with (the NVIDIA/Intel plug-ins' match-source behaviour, see
+    /// [`dds_source_options`]) — falling back to [`DdsOptions::default`] when the source
+    /// wasn't a writable DDS.
+    pub dds: Option<DdsOptions>,
     /// PSD/PSB: embed the thumbnail image resource (1036), Preferences › File Handling › Image
     /// Previews. On by default, as Photoshop's Always Save.
     pub image_previews: bool,
@@ -246,6 +252,7 @@ impl Default for ExportOptions {
             tiff_layers: false,
             xmp: XmpEmbed::All,
             tga_bits: None,
+            dds: None,
             image_previews: true,
             psd_maximize_compatibility: true,
             document_path: None,
@@ -333,11 +340,14 @@ pub struct ImportOptions {
     pub max_group_depth: usize,
     /// The demosaic method camera raws are developed with.
     pub demosaic: raw::Demosaic,
+    /// A DDS texture's alpha, mip chain, flip and cubemap choices (File › Open's DDS prompt
+    /// answers).
+    pub dds: DdsImport,
 }
 
 impl Default for ImportOptions {
     fn default() -> Self {
-        ImportOptions { max_group_depth: photocraft_doc::MAX_GROUP_DEPTH, demosaic: raw::Demosaic::default() }
+        ImportOptions { max_group_depth: photocraft_doc::MAX_GROUP_DEPTH, demosaic: raw::Demosaic::default(), dds: DdsImport::default() }
     }
 }
 
@@ -439,7 +449,7 @@ fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt, o
     if is_psd_input(name, bytes) {
         return import_psd(name, bytes, ctl, damaged);
     }
-    flat::import_flat(name, bytes)
+    flat::import_flat(name, bytes, opts)
 }
 
 /// Extension names can be wrong (for example, an image downloaded as WebP and renamed `.svg`).

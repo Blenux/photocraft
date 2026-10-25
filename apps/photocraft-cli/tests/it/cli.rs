@@ -631,8 +631,9 @@ fn dpx_converts_both_ways_with_the_bits_asked_for() {
 }
 
 /// DDS converts both ways; `--dds-compression` picks the FourCC (bytes 84–87; none writes
-/// uncompressed pixels) and `--dds-mipmaps` the mip count (bytes 28–31). A compression that
-/// isn't none, bc1, bc2 or bc3 is a usage error and nothing is written (#1327).
+/// uncompressed pixels; bc4, bc5 and bc7 get the `DX10` header) and `--dds-mipmaps` the mip
+/// count (bytes 28–31). A compression that isn't none, bc1, bc1a, bc2, bc3, bc4, bc5, bc7 or
+/// a8 is a usage error and nothing is written (#1327).
 #[test]
 fn dds_converts_both_ways_with_the_compression_asked_for() {
     let d = tmp("dds");
@@ -643,6 +644,9 @@ fn dds_converts_both_ways_with_the_compression_asked_for() {
         (&["--dds-compression", "bc1"][..], *b"DXT1", 1),
         (&["--dds-compression", "DXT3", "--dds-mipmaps"][..], *b"DXT3", 4),
         (&["--dds-compression", "bc3"][..], *b"DXT5", 1),
+        (&["--dds-compression", "bc4"][..], *b"DX10", 1),
+        (&["--dds-compression", "bc5"][..], *b"DX10", 1),
+        (&["--dds-compression", "bc7"][..], *b"DX10", 1),
         (&["--dds-mipmaps"][..], [0; 4], 4),
     ] {
         let out = d.join("a.dds");
@@ -654,7 +658,7 @@ fn dds_converts_both_ways_with_the_compression_asked_for() {
         ok(bin().arg("convert").arg(&out).arg(&back));
         assert!(back.exists(), "{args:?}");
     }
-    for bad in ["bc7", "dxt2", ""] {
+    for bad in ["bc6h", "dxt2", ""] {
         let out = d.join("bad.dds");
         let o = bin().arg("convert").arg(&a).arg(&out).args(["--dds-compression", bad]).output().unwrap();
         assert_eq!(o.status.code(), Some(2), "--dds-compression {bad}");

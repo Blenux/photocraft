@@ -126,7 +126,7 @@ impl Headless {
                 let mut opts =
                     photocraft_io::ExportOptions { tiff_layers: p.get("tiffLayers").and_then(Value::as_bool).unwrap_or(false), tga_bits, ..Default::default() };
                 opts.encode.dpx_bits = photocraft_engine::file_cmds::dpx_bits_param(&p, "doc.save").map_err(|e| bad(e.to_string()))?;
-                opts.encode.dds = photocraft_engine::file_cmds::dds_param(&p, "doc.save").map_err(|e| bad(e.to_string()))?.unwrap_or_default();
+                opts.dds = photocraft_engine::file_cmds::dds_param(&p, "doc.save").map_err(|e| bad(e.to_string()))?;
                 match p.get("quality") {
                     None | Some(Value::Null) => {}
                     Some(v) => {

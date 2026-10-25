@@ -20,6 +20,7 @@ mod comps_artboards;
 mod corpus;
 mod corpus_regressions;
 mod cylinder_warp;
+mod dds;
 mod effects_multi;
 mod exif_resolution;
 mod export_progress;

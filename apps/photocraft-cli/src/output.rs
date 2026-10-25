@@ -1,8 +1,11 @@
-use photocraft_io::ExportOptions;
+use photocraft_io::{DdsImport, ExportOptions, ImportOptions};
 use serde_json::Value;
 use std::io::Write;
 
-use crate::{Result, args::ExportArgs};
+use crate::{
+    Result,
+    args::{ExportArgs, ImportArgs},
+};
 
 /// The `--format` family's options. A bad value never gets here: clap refused it.
 impl From<&ExportArgs> for ExportOptions {
@@ -22,11 +25,67 @@ impl From<&ExportArgs> for ExportOptions {
         if let Some(f) = a.jpeg_format {
             o.encode.jpeg_format = f;
         }
-        if let Some(c) = a.dds_compression {
-            o.encode.dds.compression = c;
+        // Any DDS save flag builds `dds`; with none the export keeps what the input was
+        // written with (the plug-ins' match-source default).
+        fn dds(o: &mut ExportOptions) -> &mut photocraft_io::DdsOptions {
+            o.dds.get_or_insert_with(photocraft_io::DdsOptions::default)
         }
-        o.encode.dds.mipmaps = a.dds_mipmaps;
+        if let Some(c) = a.dds_compression {
+            dds(&mut o).compression = c;
+        }
+        if a.dds_mipmaps {
+            dds(&mut o).mipmaps = true;
+        }
+        if let Some(q) = a.dds_quality {
+            dds(&mut o).quality = q;
+        }
+        if a.dds_srgb {
+            dds(&mut o).srgb = true;
+        }
+        if let Some(f) = a.dds_mip_filter {
+            dds(&mut o).mip_filter = f;
+        }
+        if let Some(n) = a.dds_min_mip_size {
+            dds(&mut o).min_mip_size = n;
+        }
+        if let Some(n) = a.dds_max_mip_count {
+            dds(&mut o).max_mip_count = n;
+        }
+        if a.dds_no_mip_gamma {
+            dds(&mut o).mip_gamma_correct = false;
+        }
+        if a.dds_no_mip_premult {
+            dds(&mut o).mip_premult_alpha = false;
+        }
+        if a.dds_premult {
+            dds(&mut o).export_premult_alpha = true;
+        }
+        if a.dds_normal_map {
+            dds(&mut o).normal_map = true;
+        }
+        if a.dds_flip {
+            dds(&mut o).flip = true;
+        }
+        if let Some(c) = a.dds_cube {
+            dds(&mut o).cube = c;
+        }
         o
+    }
+}
+
+/// The DDS open choices `--dds-alpha-channel`, `--dds-mips-as-layers`, `--dds-load-flip` and
+/// `--dds-load-cube` make; every other import stays at its default.
+impl From<&ImportArgs> for ImportOptions {
+    fn from(a: &ImportArgs) -> Self {
+        ImportOptions {
+            dds: DdsImport {
+                alpha_as_channel: a.dds_alpha_channel,
+                mips_as_layers: a.dds_mips_as_layers,
+                flip: a.dds_load_flip,
+                cube: a.dds_load_cube.unwrap_or_default(),
+            },
+            ..Default::default()
+        }
     }
 }
 

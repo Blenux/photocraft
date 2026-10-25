@@ -484,6 +484,7 @@
 	Format	Μορφή
 	Quality	Ποιότητα
 	Compression	Συμπίεση
+	A8 / alpha only	A8 / μόνο άλφα
 	Transparent	Διαφανές
 	Transparency	Διαφάνεια
 	Canvas	Καμβάς
@@ -4073,6 +4074,40 @@ curves	Smooth	Εξομάλυνση
 # DDS Options (#1327)
 	DDS Options	Επιλογές DDS
 	Generate Mipmaps	Δημιουργία mipmap
+	sRGB	sRGB
+	Box	Πλαίσιο
+	Min	Ελάχ.
+	Max	Μέγ.
+	Kaiser	Kaiser
+	Mitchell-Netravali	Μίτσελ-Νετραβάλι
+	Fastest	Γρηγορότερη
+	Production	Παραγωγή
+	Highest	Υψηλότερη
+	Filter in linear light	Φιλτράρισμα σε γραμμικό φως
+	Filter premultiplied (no alpha bleed)	Φιλτράρισμα προ-πολλαπλασιασμένο (χωρίς διαρροή άλφα)
+	Premultiplied alpha	Προ-πολλαπλασιασμένο άλφα
+	Normal map	Χάρτης κανονικών
+	Flip vertically	Αναστροφή κάθετα
+	Stop at	Στάση στα
+	px; at most	px· το πολύ
+	levels	επίπεδα
+
+	Cubemap	Κυβικός χάρτης
+	Faces from layers	Όψεις από επίπεδα
+
+# DDS Import (#8632)
+	DDS Import	Εισαγωγή DDS
+	Load transparency as alpha channel	Φόρτωση διαφάνειας ως κανάλι άλφα
+	Mipmaps as separate layers	Mipmap ως ξεχωριστά επίπεδα
+	Open cancelled	Το άνοιγμα ακυρώθηκε
+	Open failed: {error}	Το άνοιγμα απέτυχε: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Όψεις ως επίπεδα
+	Cross-layout sheet	Φύλλο σε διάταξη σταυρού
+	+X face only	Μόνο όψη +X
+	Uncompressed	Ασυμπίεστο
+@plural	{n} mip level|{n} mip levels	{n} επίπεδο mip|{n} επίπεδα mip
+@plural	{n} face|{n} faces	{n} όψη|{n} όψεις
 
 # Color Table (.act) dialog
 	There is no color table to save.	Δεν υπάρχει πίνακας χρωμάτων για αποθήκευση.

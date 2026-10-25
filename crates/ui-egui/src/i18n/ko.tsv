@@ -3582,7 +3582,41 @@ curves	Smooth	매끄럽게
 # DDS Options (#1327)
 	DDS Options	DDS 옵션
 	Compression	압축
+	A8 / alpha only	A8 / 알파만
 	Generate Mipmaps	밉맵 생성
+	sRGB	sRGB
+	Box	박스
+	Min	최소
+	Max	최대
+	Kaiser	카이저
+	Mitchell-Netravali	미첼-네트라발리
+	Fastest	가장 빠름
+	Production	프로덕션
+	Highest	최고
+	Filter in linear light	리니어 라이트로 필터링
+	Filter premultiplied (no alpha bleed)	프리멀티플라이드 필터(알파 번짐 없음)
+	Premultiplied alpha	프리멀티플라이드 알파
+	Normal map	노멀 맵
+	Flip vertically	세로로 뒤집기
+	Stop at	최소
+	px; at most	px, 최대
+	levels	레벨
+	Cubemap	큐브맵
+	Faces from layers	레이어에서 면으로
+
+# DDS Import (#8632)
+	DDS Import	DDS 가져오기
+	Load transparency as alpha channel	투명도를 알파 채널로 불러오기
+	Mipmaps as separate layers	밉맵을 개별 레이어로
+	Open cancelled	열기 취소됨
+	Open failed: {error}	열기 실패: {error}
+	{name} ({width} × {height})	{name}({width} × {height})
+	Faces as layers	면을 레이어로
+	Cross-layout sheet	십자 배치 시트
+	+X face only	+X 면만
+	Uncompressed	비압축
+@plural	{n} mip level|{n} mip levels	밉맵 레벨 {n}개
+@plural	{n} face|{n} faces	면 {n}개
 
 # Color Table (.act) dialog
 	There is no color table to save.	저장할 색상표가 없습니다.

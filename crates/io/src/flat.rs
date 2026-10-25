@@ -8,18 +8,22 @@ use photocraft_doc::{AlphaChannel, Document, Layer, LayerContent};
 use photocraft_geom::{Rect, Size, TILE_SIZE};
 use photocraft_raster::Surface;
 
-use crate::{ExportOptions, ExportResult, ImportResult, IoError, TgaBits, XmpEmbed};
+use crate::{DdsCompression, DdsCubeMap, ExportOptions, ExportResult, ImportOptions, ImportResult, IoError, TgaBits, XmpEmbed};
 
 /// Bytes per band when converting or exporting a band of rows at a time.
 const BAND_BYTES: usize = 32 << 20;
 
 /// Decodes a flat image into a single-layer document; a TIFF with Photoshop layer data opens
-/// layered (see [`crate::tiff_layers`]).
-pub fn import_flat(name: &str, bytes: &[u8]) -> Result<ImportResult, IoError> {
+/// layered (see [`crate::tiff_layers`]), and a DDS opens per the import options' alpha and
+/// mip-chain answers.
+pub fn import_flat(name: &str, bytes: &[u8], opts: &ImportOptions) -> Result<ImportResult, IoError> {
     // Detected once; every step below branches on it.
     let format = codecs::detect(bytes);
     if format == Some(Format::Tiff) {
         return import_tiff_page(name, bytes, None);
+    }
+    if format == Some(Format::Dds) {
+        return import_dds(name, bytes, opts);
     }
     let img = codecs::decode_as(format.ok_or(codecs::CodecError::UnknownFormat)?, bytes)?;
     // A palette BMP, PNG or GIF opens in Indexed Color mode with its colour table, as in
@@ -132,6 +136,14 @@ fn file_encoding_as(format: Option<Format>, bytes: &[u8]) -> photocraft_doc::Fil
             }
             None => {}
         },
+        Some(Format::Dds) => {
+            if let Ok(info) = codecs::dds_info(bytes) {
+                e.dds_compression = info.compression.map(|c| c.name().to_string());
+                e.dds_srgb = info.srgb;
+                e.dds_mipmaps = info.levels > 1;
+                e.dds_cube = info.cube;
+            }
+        }
         _ => {}
     }
     e
@@ -155,6 +167,50 @@ pub fn apply_file_encoding(doc: &Document, opts: &mut codecs::EncodeOptions) {
         opts.webp_quality = q.min(100);
     }
     opts.png_stereo = e.png_stereo.and_then(codecs::PngStereo::from_mode);
+}
+
+/// The DDS options matching what `doc`'s file was opened with (see [`file_encoding`]), for a
+/// save that chose none — the NVIDIA/Intel plug-ins' "match source" defaults. An encoding
+/// that isn't writable leaves [`DdsOptions::default`].
+pub fn dds_source_options(doc: &Document) -> codecs::DdsOptions {
+    let e = &doc.file_encoding;
+    codecs::DdsOptions {
+        compression: e.dds_compression.as_deref().and_then(codecs::DdsCompression::from_name).unwrap_or_default(),
+        srgb: e.dds_srgb,
+        mipmaps: e.dds_mipmaps,
+        // A cubemap source keeps its faces: six face layers write `Layers`, a 4:3 sheet
+        // writes `Cross` (a document the user flattened back to one square texture writes
+        // the plain 2D file instead).
+        cube: if !e.dds_cube {
+            codecs::DdsCubeMap::Off
+        } else if dds_face_layers_ok(doc) {
+            codecs::DdsCubeMap::Layers
+        } else if dds_cross_sheet(doc) {
+            codecs::DdsCubeMap::Cross
+        } else {
+            codecs::DdsCubeMap::Off
+        },
+        ..Default::default()
+    }
+}
+
+/// Whether the document's six bottom-most layers can serve as cubemap faces (pixel layers on
+/// a square canvas): the cheap half of [`dds_face_layers`], for match-source defaults and the
+/// DDS Options dialog's cubemap row.
+pub fn dds_face_layers_ok(doc: &Document) -> bool {
+    let canvas = doc.bounds();
+    doc.layers.len() >= 6
+        && canvas.width() == canvas.height()
+        && canvas.width() > 0
+        && doc.layers.iter().take(6).all(|l| matches!(l.content, LayerContent::Raster(_)))
+}
+
+/// Whether the document is a 4:3 horizontal-cross sheet (see [`DDS_CROSS_CELLS`]) a
+/// `Cross` cubemap save splits back into faces.
+pub fn dds_cross_sheet(doc: &Document) -> bool {
+    let canvas = doc.bounds();
+    let (w, h) = (canvas.width(), canvas.height());
+    w > 0 && w % 4 == 0 && h % 3 == 0 && w / 4 == h / 3
 }
 
 /// Photoshop opens a 32-bit Targa as an opaque Background plus an "Alpha 1" channel holding the
@@ -244,26 +300,254 @@ pub fn import_tiff_page(name: &str, bytes: &[u8], page: Option<usize>) -> Result
     image_to_document(name, &img.oriented(orientation)?)
 }
 
-/// A decoded flat image as a single-layer document: a locked "Background" when it is opaque, a
-/// normal "Layer 0" when it has transparency.
-pub(crate) fn image_to_document(name: &str, img: &Image) -> Result<ImportResult, IoError> {
-    // What the decoder noticed (frames or pages left out, data ending early) comes first.
-    let mut warnings: Vec<String> = img.warnings.iter().map(ToString::to_string).collect();
+/// The document mode, surface layout and depth a decoded `img` imports as; `warn` is the
+/// F16→F32 note.
+fn image_kind(img: &Image) -> (ColorMode, ChannelLayout, SampleType, CSample, Option<&'static str>) {
     let (mode, target_layout) = match img.layout() {
         ChannelLayout::Gray | ChannelLayout::GrayA => (ColorMode::Grayscale, ChannelLayout::GrayA),
         ChannelLayout::Rgb | ChannelLayout::Rgba => (ColorMode::Rgb, ChannelLayout::Rgba),
         ChannelLayout::Cmyk | ChannelLayout::CmykA => (ColorMode::Cmyk, ChannelLayout::CmykA),
         ChannelLayout::Lab | ChannelLayout::LabA => (ColorMode::Lab, ChannelLayout::LabA),
     };
-    let (depth, csample) = match img.sample_type() {
-        CSample::U8 => (SampleType::U8, CSample::U8),
-        CSample::U16 => (SampleType::U16, CSample::U16),
-        CSample::F16 => {
-            warnings.push("16-bit float samples are stored as 32-bit float".to_string());
-            (SampleType::F32, CSample::F32)
-        }
-        CSample::F32 => (SampleType::F32, CSample::F32),
+    let (depth, csample, warn) = match img.sample_type() {
+        CSample::U8 => (SampleType::U8, CSample::U8, None),
+        CSample::U16 => (SampleType::U16, CSample::U16, None),
+        CSample::F16 => (SampleType::F32, CSample::F32, Some("16-bit float samples are stored as 32-bit float")),
+        CSample::F32 => (SampleType::F32, CSample::F32, None),
     };
+    (mode, target_layout, depth, csample, warn)
+}
+
+/// The image with its alpha channel, or dropped to opaque when the DDS import answer routes
+/// the alpha to a document channel instead (see [`import_dds`]).
+fn dds_alpha<'a>(img: &'a Image, alpha: bool) -> std::borrow::Cow<'a, Image> {
+    if alpha { std::borrow::Cow::Borrowed(img) } else { img.converted(img.layout().without_alpha(), img.sample_type()) }
+}
+
+/// Whether `img`'s alpha is fully opaque everywhere, a band of rows at a time. An all-opaque
+/// alpha holds no data: routing it to a channel would add an all-white "Alpha 1" to every
+/// opaque texture (a BC1 file reports an alpha channel whether or not a block uses it).
+fn alpha_is_opaque(img: &Image) -> Result<bool, IoError> {
+    if !img.layout().has_alpha() {
+        return Ok(true);
+    }
+    let ch = img.layout().channels();
+    let (w, h) = img.dimensions();
+    let row = img.data().len() / (h.max(1) as usize);
+    for rows in img.data().chunks(row.max(1) * (BAND_BYTES / row.max(1)).max(1)) {
+        let n = (rows.len() / row.max(1)) as u32;
+        let vals = Image::from_raw(w, n, img.layout(), img.sample_type(), rows.to_vec())?.to_normalized();
+        if vals.chunks_exact(ch).any(|px| px.last().copied().unwrap_or(1.0) != 1.0) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Flip a decoded texture image's rows (the GL-vs-D3D origin toggle).
+fn flip_dds_image(img: &mut Image) {
+    let (_, h) = img.dimensions();
+    let row_len = img.data().len() / (h as usize).max(1);
+    let data = img.data_mut();
+    for y in 0..(h as usize) / 2 {
+        for x in 0..row_len {
+            data.swap(y * row_len + x, (h as usize - 1 - y) * row_len + x);
+        }
+    }
+}
+
+/// A DDS texture per `opts`' import answers: its alpha channel kept as the layer's
+/// transparency or routed to an "Alpha 1" document channel (game textures often carry data
+/// such as specular maps in alpha rather than transparency; the NVIDIA/Intel plug-ins' "load
+/// transparency as alpha channel"), its mip chain as one "Mip N" layer per level or the top
+/// level only, and its rows flipped when asked. The channel answer opens the texture opaque,
+/// as a Targa opens — nothing is discarded — but an alpha that is the same value everywhere
+/// holds no data and opens neither channel nor transparency. With a mip chain, only the top
+/// level's alpha becomes the channel. A cubemap opens per [`import_dds_cube`].
+fn import_dds(name: &str, bytes: &[u8], opts: &ImportOptions) -> Result<ImportResult, IoError> {
+    if codecs::dds_info(bytes)?.cube {
+        return import_dds_cube(name, bytes, opts);
+    }
+    let levels = if opts.dds.mips_as_layers {
+        codecs::decode_dds_levels(bytes, &codecs::DecodeOptions::default())?
+    } else {
+        vec![codecs::decode_as(Format::Dds, bytes)?]
+    };
+    import_dds_levels(name, levels, bytes, opts)
+}
+
+/// The level images of a DDS texture as a document: the alpha, mip and flip import answers as
+/// in [`import_dds`], `bytes` for the saved [`file_encoding`].
+fn import_dds_levels(name: &str, mut levels: Vec<Image>, bytes: &[u8], opts: &ImportOptions) -> Result<ImportResult, IoError> {
+    if opts.dds.flip {
+        for img in levels.iter_mut() {
+            flip_dds_image(img);
+        }
+    }
+    let raw_top = levels.first().ok_or_else(|| IoError::Unsupported("the DDS texture declares no mip levels".into()))?;
+    let to_channel = opts.dds.alpha_as_channel && !alpha_is_opaque(raw_top)?;
+    // The top level keeps its alpha when the channel path reads it; the answer decides the
+    // rest — transparency (keep) or channel (strip opaque).
+    let top = dds_alpha(raw_top, !opts.dds.alpha_as_channel || to_channel);
+    let mut r = image_to_document(name, &top)?;
+    if to_channel {
+        tga_alpha_to_channel(&mut r.document)?;
+    }
+    r.document.file_encoding = file_encoding_as(Some(Format::Dds), bytes);
+    if levels.len() == 1 {
+        return Ok(r);
+    }
+    let (_, target_layout, _, csample, _) = image_kind(&top);
+    if let Some(l) = r.document.layers.first_mut() {
+        l.name = "Mip 0".to_string();
+        // The channel answer's opaque Background becomes a normal "Mip 0" layer like the rest.
+        l.locks.transparency = false;
+        l.locks.position = false;
+    }
+    let strip = |img| dds_alpha(img, !opts.dds.alpha_as_channel);
+    for (i, img) in levels.iter().enumerate().skip(1) {
+        let mut s = image_surface(&strip(img), target_layout, csample)?;
+        s.prune();
+        r.document.layers.push(Layer::new(format!("Mip {i}"), LayerContent::Raster(s)));
+    }
+    Ok(r)
+}
+
+/// Cubemap face names in canonical DDS storage order.
+pub(crate) const DDS_FACES: [&str; 6] = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"];
+
+/// Each canonical face's `(column, row)` cell in the horizontal-cross sheet: the middle row
+/// is `-X +Z +X -Z`, `+Y` above and `-Y` below `+Z` — the layout cube-map tools
+/// (CubeMapGen, NVIDIA's exporter) write and read, faces unrotated.
+pub(crate) const DDS_CROSS_CELLS: [(u32, u32); 6] = [(2, 1), (0, 1), (1, 0), (1, 2), (1, 1), (3, 1)];
+
+/// A DDS cubemap per `opts.dds.cube`: `Layers` opens one layer per face ("Face +X" …, the
+/// bottom six layers in storage order so a save reads them back; `mips_as_layers` adds a
+/// "Face ±X Mip N" layer per further level), `Cross` the faces' top levels as the
+/// horizontal-cross sheet, and `Off` the +X face as a plain texture.
+fn import_dds_cube(name: &str, bytes: &[u8], opts: &ImportOptions) -> Result<ImportResult, IoError> {
+    let mut faces = codecs::decode_dds_faces(bytes, &codecs::DecodeOptions::default())?;
+    if opts.dds.flip {
+        for (_, chain) in faces.iter_mut() {
+            for img in chain.iter_mut() {
+                flip_dds_image(img);
+            }
+        }
+    }
+    match opts.dds.cube {
+        DdsCubeMap::Off => {
+            let (_, chain) = faces.into_iter().next().ok_or_else(|| IoError::Unsupported("the DDS cubemap stores no faces".into()))?;
+            let levels = if opts.dds.mips_as_layers { chain } else { chain.into_iter().take(1).collect() };
+            import_dds_levels(name, levels, bytes, opts)
+        }
+        DdsCubeMap::Cross => {
+            let mut r = import_dds_levels(name, vec![dds_cross(&faces)?], bytes, opts)?;
+            if opts.dds.mips_as_layers && faces.iter().any(|(_, c)| c.len() > 1) {
+                r.warnings.push("a cross-layout sheet shows the faces' top mip level only".into());
+            }
+            Ok(r)
+        }
+        DdsCubeMap::Layers => import_dds_cube_layers(name, faces, bytes, opts),
+    }
+}
+
+/// The cubemap's faces as one square layer each, plus a layer per further mip level when
+/// `mips_as_layers` asks. Stack order is mip-major: the six faces' top levels stay the
+/// bottom six layers in `+X -X +Y -Y +Z -Z` order (what a `Layers` cubemap save reads).
+fn import_dds_cube_layers(name: &str, faces: Vec<(u8, Vec<Image>)>, bytes: &[u8], opts: &ImportOptions) -> Result<ImportResult, IoError> {
+    let top = faces.first().and_then(|(_, c)| c.first()).ok_or_else(|| IoError::Unsupported("the DDS cubemap stores no faces".into()))?;
+    let (mode, target_layout, depth, csample, warn) = image_kind(top);
+    let (w, h) = top.dimensions();
+    let mut doc = Document::new(name, Size::new(w, h), mode, depth);
+    let warnings: Vec<String> = warn.map(ToString::to_string).into_iter().collect();
+    // A face whose alpha holds data (and the channel answer asked for it) gains a
+    // "Face ±X Alpha" document channel and opens opaque, as the 2D path's "Alpha 1" does.
+    let mut alphas: Vec<Option<AlphaChannel>> = Vec::with_capacity(faces.len());
+    for (face, chain) in &faces {
+        let img = chain.first().ok_or_else(|| IoError::Unsupported("the DDS cubemap stores no mip levels".into()))?;
+        let name = format!("Face {} Alpha", DDS_FACES[usize::from(*face)]);
+        let keep = opts.dds.alpha_as_channel && !alpha_is_opaque(img)?;
+        alphas.push(keep.then(|| image_alpha_channel(img, name, depth)).transpose()?);
+    }
+    let levels = if opts.dds.mips_as_layers { faces.iter().map(|(_, c)| c.len()).max().unwrap_or(1) } else { 1 };
+    for level in 0..levels {
+        for ((face, chain), alpha) in faces.iter().zip(alphas.iter()) {
+            let Some(img) = chain.get(level) else { continue };
+            let mut s = image_surface(&dds_alpha(img, alpha.is_none()), target_layout, csample)?;
+            s.prune();
+            let name = match level {
+                0 => format!("Face {}", DDS_FACES[usize::from(*face)]),
+                _ => format!("Face {} Mip {}", DDS_FACES[usize::from(*face)], level),
+            };
+            doc.layers.push(Layer::new(name, LayerContent::Raster(s)));
+        }
+    }
+    doc.channels.extend(alphas.into_iter().flatten());
+    doc.file_encoding = file_encoding_as(Some(Format::Dds), bytes);
+    Ok(ImportResult { document: doc, warnings, source_read_only: false, preview_only: false })
+}
+
+/// `img`'s alpha channel as a grayscale "Face ±X Alpha" document channel surface.
+fn image_alpha_channel(img: &Image, name: String, depth: SampleType) -> Result<AlphaChannel, IoError> {
+    let ch = img.layout().channels();
+    let (w, h) = img.dimensions();
+    let mut alpha = Surface::new(PixelFormat::new(ColorMode::Grayscale, depth, false));
+    let row = img.data().len() / (h.max(1) as usize);
+    let band = (BAND_BYTES / row.max(1)).max(1);
+    for (i, rows) in img.data().chunks(row.max(1) * band).enumerate() {
+        let n = (rows.len() / row.max(1)) as u32;
+        let vals = Image::from_raw(w, n, img.layout(), img.sample_type(), rows.to_vec())?.to_normalized();
+        let a: Vec<f32> = vals.chunks_exact(ch).map(|p| p.last().copied().unwrap_or(1.0)).collect();
+        let y0 = (i * band) as i32;
+        alpha.write_region(Rect::new(0, y0, w as i32, y0 + n as i32), &a);
+    }
+    alpha.prune();
+    Ok(AlphaChannel::new(name, alpha))
+}
+
+/// The faces' top mip levels arranged as the horizontal-cross sheet ([`DDS_CROSS_CELLS`]),
+/// a `4s × 3s` image in the faces' layout; cells a partial cube doesn't store stay
+/// transparent (or black without alpha).
+fn dds_cross(faces: &[(u8, Vec<Image>)]) -> Result<Image, IoError> {
+    let first = faces.first().and_then(|(_, c)| c.first()).ok_or_else(|| IoError::Unsupported("the DDS cubemap stores no faces".into()))?;
+    let (w, h) = first.dimensions();
+    if w != h {
+        return Err(IoError::Unsupported("a cubemap's faces must be square".into()));
+    }
+    let (layout, sample) = (first.layout(), first.sample_type());
+    let s = w as usize;
+    let ch = layout.channels();
+    let mut data = try_buffer(4 * s * 3 * s, ch * sample.bytes())?;
+    data.resize(4 * s * 3 * s * ch * sample.bytes(), 0);
+    for (face, chain) in faces {
+        let Some(img) = chain.first() else { continue };
+        let converted;
+        let img = if (img.layout(), img.sample_type()) == (layout, sample) {
+            img
+        } else {
+            converted = img.convert(layout, sample);
+            &converted
+        };
+        if img.dimensions() != (w, h) {
+            return Err(IoError::Unsupported("a cubemap's faces must be one size".into()));
+        }
+        let (cx, cy) = DDS_CROSS_CELLS.get(usize::from(*face)).copied().unwrap_or((0, 0));
+        let src_row = s * ch * sample.bytes();
+        for (y, row) in img.data().chunks(src_row).enumerate() {
+            let at = ((cy as usize * s + y) * 4 * s + cx as usize * s) * ch * sample.bytes();
+            data.get_mut(at..at + src_row).ok_or_else(|| IoError::Unsupported("cross-layout offset overflow".into()))?.copy_from_slice(row);
+        }
+    }
+    Image::from_raw(4 * w, 3 * h, layout, sample, data).map_err(Into::into)
+}
+
+/// A decoded flat image as a single-layer document: a locked "Background" when it is opaque, a
+/// normal "Layer 0" when it has transparency.
+pub(crate) fn image_to_document(name: &str, img: &Image) -> Result<ImportResult, IoError> {
+    // What the decoder noticed (frames or pages left out, data ending early) comes first.
+    let mut warnings: Vec<String> = img.warnings.iter().map(ToString::to_string).collect();
+    let (mode, target_layout, depth, csample, warn) = image_kind(img);
+    warnings.extend(warn.map(ToString::to_string));
     let (w, h) = img.dimensions();
     let mut doc = Document::new(name, Size::new(w, h), mode, depth);
     let mut s = image_surface(img, target_layout, csample)?;
@@ -624,6 +908,19 @@ pub(crate) fn export_flat_with(doc: &Document, format: Format, opts: &ExportOpti
         return Ok(r);
     }
     let mut warnings = Vec::new();
+    // A DDS cubemap's faces-as-layers save reads the six face layers directly — resolve
+    // the mode before the composite so it does not flatten (and warn) for nothing.
+    let resolved_dds = (format == Format::Dds).then(|| {
+        let mut r = opts.clone();
+        r.encode.dds =
+            opts.dds.or_else(|| (opts.encode.dds != codecs::DdsOptions::default()).then_some(opts.encode.dds)).unwrap_or_else(|| dds_source_options(doc));
+        r
+    });
+    if let Some(r) = &resolved_dds
+        && r.encode.dds.cube == DdsCubeMap::Layers
+    {
+        return dds_encode_cube(&dds_face_layers(doc, &mut warnings)?, r, warnings);
+    }
     let cmyk_target = format.caps().layouts.iter().any(|layout| layout.is_cmyk());
     let lab_target = format.caps().layouts.iter().any(|layout| layout.is_lab());
     let mut img = document_to_image_for(doc, &mut warnings, cmyk_target, lab_target)?;
@@ -668,7 +965,93 @@ pub(crate) fn export_flat_with(doc: &Document, format: Format, opts: &ExportOpti
     if format == Format::Tga {
         img = tga_image(doc, img, opts.tga_bits, &mut warnings)?;
     }
+    if format == Format::Dds {
+        // Explicit choices win; a save that asked for none writes what the file was opened
+        // with when that encoding is one we can write. `Layers` returned before the
+        // composite; `Off` and `Cross` both flatten first — the sheet is the document.
+        let resolved = resolved_dds.unwrap_or_else(|| opts.clone());
+        match resolved.encode.dds.cube {
+            DdsCubeMap::Off | DdsCubeMap::Layers => {}
+            DdsCubeMap::Cross => {
+                let img = dds_image(doc, img, resolved.encode.dds.compression, &mut warnings)?;
+                return dds_encode_cube(&dds_split_cross(&img)?, &resolved, warnings);
+            }
+        }
+        img = dds_image(doc, img, resolved.encode.dds.compression, &mut warnings)?;
+        return encode_image(&img, format, &resolved, warnings);
+    }
     encode_image(&img, format, opts, warnings)
+}
+
+/// The document's six bottom-most layers as cubemap faces (`+X -X +Y -Y +Z -Z`, stack order
+/// — the order a faces-as-layers import made). Each must be a pixel layer; the square canvas
+/// is the face size and the layers' own pixels are read — masks, effects, blend modes and
+/// visibility are not applied.
+fn dds_face_layers(doc: &Document, warnings: &mut Vec<String>) -> Result<Vec<Image>, IoError> {
+    let canvas = doc.bounds();
+    let (w, h) = (canvas.width(), canvas.height());
+    if w == 0 || w != h {
+        return Err(IoError::Unsupported("a DDS cubemap's faces are square; the canvas is not".into()));
+    }
+    let mut faces = Vec::with_capacity(6);
+    let mut styled = false;
+    for layer in doc.layers.iter().take(6) {
+        let LayerContent::Raster(s) = &layer.content else {
+            return Err(IoError::Unsupported(format!("cubemap face \"{}\" is a group or non-pixel layer", layer.name)));
+        };
+        styled |= !layer.visible || layer.mask.is_some() || !layer.effects.items.is_empty();
+        let fmt = s.format();
+        let data = s.try_to_interleaved(canvas).map_err(|e| IoError::Unsupported(format!("out of memory reading \"{}\": {e}", layer.name)))?;
+        faces.push(Image::from_raw(w, h, layout_for(fmt.mode, fmt.alpha), csample(fmt.sample), data)?);
+    }
+    if faces.len() < 6 {
+        return Err(IoError::Unsupported(format!(
+            "a cubemap save needs six pixel layers for its faces (+X -X +Y -Y +Z -Z); the document has {}",
+            doc.layers.len()
+        )));
+    }
+    if styled {
+        warnings.push("cubemap faces are the layers' own pixels; masks, effects and visibility were not applied".into());
+    }
+    Ok(faces)
+}
+
+/// A 4:3 cross-layout sheet split into its six faces, in canonical [`DDS_FACES`] order —
+/// the import sheet's inverse.
+fn dds_split_cross(img: &Image) -> Result<Vec<Image>, IoError> {
+    let (w, h) = img.dimensions();
+    if h % 3 != 0 || w % 4 != 0 || w / 4 != h / 3 {
+        return Err(IoError::Unsupported(format!("a cross-layout cubemap is a 4:3 sheet of six square faces; the image is {w}x{h}")));
+    }
+    let s = w / 4;
+    let (layout, sample) = (img.layout(), img.sample_type());
+    let (ch, bps) = (layout.channels(), sample.bytes());
+    let row = ch * bps;
+    let mut faces = Vec::with_capacity(6);
+    for &(cx, cy) in &DDS_CROSS_CELLS {
+        let mut data = try_buffer((s * s) as usize, row)?;
+        for y in 0..s as usize {
+            let at = ((cy as usize * s as usize + y) * w as usize + cx as usize * s as usize) * row;
+            data.extend_from_slice(img.data().get(at..at + s as usize * row).ok_or_else(|| IoError::Unsupported("cross-layout offset overflow".into()))?);
+        }
+        faces.push(Image::from_raw(s, s, layout, sample, data)?);
+    }
+    Ok(faces)
+}
+
+/// Six face images encoded as a DDS cubemap (each with its own mip chain per
+/// `opts.encode.dds`), with the flattened path's fidelity warnings computed on the +X face.
+fn dds_encode_cube(faces: &[Image], opts: &ExportOptions, mut warnings: Vec<String>) -> Result<ExportResult, IoError> {
+    if let Some(first) = faces.first() {
+        for w in codecs::fidelity_warnings_with(first, Format::Dds, &opts.encode) {
+            if w.is_fatal() {
+                return Err(IoError::Unsupported(w.to_string()));
+            }
+            warnings.push(w.to_string());
+        }
+    }
+    let bytes = codecs::encode_dds_cube(faces, &opts.encode)?;
+    Ok(ExportResult { bytes, warnings })
 }
 
 /// What Targa Options offers first, as Photoshop does: 32 bits per pixel when the document has an
@@ -706,7 +1089,7 @@ fn tga_image(doc: &Document, img: Image, bits: Option<TgaBits>, warnings: &mut V
             warnings.push("transparency composited over white; a 24-bit Targa has no alpha".into());
             matte_over_white(&img)
         }
-        (TgaBits::Bits32, [channel]) => tga_with_alpha_channel(doc, img, channel, warnings),
+        (TgaBits::Bits32, [channel]) => with_alpha_channel(doc, img, channel, ChannelLayout::Rgba, "Targa", warnings),
         (TgaBits::Bits32, alphas) => {
             if !alphas.is_empty() {
                 warnings.push("Targa holds one alpha channel; with several, none was written (as in Photoshop)".into());
@@ -719,15 +1102,54 @@ fn tga_image(doc: &Document, img: Image, bits: Option<TgaBits>, warnings: &mut V
     }
 }
 
-/// A 32-bit Targa's image: the colours (composited over white where the layers are transparent)
-/// and `channel`'s values as the alpha.
-fn tga_with_alpha_channel(doc: &Document, img: Image, channel: &AlphaChannel, warnings: &mut Vec<String>) -> Result<Image, IoError> {
+/// A DDS texture's image: the document's alpha channel as the texture's, as Photoshop's Targa
+/// does — exactly one channel (spot channels don't count) becomes the alpha, the colours
+/// composited over white where the layers are transparent; several channels write none, with a
+/// warning. BC4 has nowhere to keep it (one channel), and BC5 stores it as the second data
+/// channel — the normal-map convention, where a texture's alpha is often data, not
+/// transparency (#8563).
+fn dds_image(doc: &Document, img: Image, compression: DdsCompression, warnings: &mut Vec<String>) -> Result<Image, IoError> {
+    let alphas: Vec<&AlphaChannel> = doc.channels.iter().filter(|c| c.spot.is_none()).collect();
+    if alphas.is_empty() {
+        return Ok(img);
+    }
+    let layout = match compression {
+        DdsCompression::Bc5 => ChannelLayout::GrayA,
+        DdsCompression::Bc4 => {
+            let names: Vec<String> = alphas.iter().map(|c| format!("\"{}\"", c.name)).collect();
+            warnings.push(format!("a BC4 DDS texture has no alpha; not saved: {}", names.join(", ")));
+            return Ok(img);
+        }
+        _ => ChannelLayout::Rgba,
+    };
+    match alphas.as_slice() {
+        [channel] => with_alpha_channel(doc, img, channel, layout, "DDS", warnings),
+        _ => {
+            warnings.push("a DDS texture holds one alpha channel; with several, none was written (as in Photoshop)".into());
+            Ok(img)
+        }
+    }
+}
+
+/// A flat image with `channel`'s values as `layout`'s alpha: the colours (composited over
+/// white where the layers are transparent, and converted to `layout`'s colour channels when
+/// they differ) merged with the channel, `format` naming the file type in warnings.
+fn with_alpha_channel(
+    doc: &Document,
+    img: Image,
+    channel: &AlphaChannel,
+    layout: ChannelLayout,
+    format: &str,
+    warnings: &mut Vec<String>,
+) -> Result<Image, IoError> {
     let img = if img.layout().has_alpha() {
-        warnings.push("transparency composited over white; the alpha channel is the Targa's alpha".into());
+        warnings.push(format!("transparency composited over white; the alpha channel is the {format}'s alpha"));
         matte_over_white(&img)?
     } else {
         img
     };
+    let colour = layout.without_alpha();
+    let img = if img.layout() == colour { img } else { img.convert(colour, img.sample_type()) };
     let (w, h) = img.dimensions();
     let canvas = doc.bounds();
     if canvas.width() != w || canvas.height() != h {
@@ -737,22 +1159,23 @@ fn tga_with_alpha_channel(doc: &Document, img: Image, channel: &AlphaChannel, wa
     let row = img.data().len() / (h.max(1) as usize);
     let band = (BAND_BYTES / row.max(1)).max(1);
     let stride = channel.surface.channels().max(1);
-    let mut data = try_buffer(img.pixel_count(), ChannelLayout::Rgba.channels() * sample.bytes())?;
+    let channels = colour.channels();
+    let mut data = try_buffer(img.pixel_count(), layout.channels() * sample.bytes())?;
     let mut y0 = canvas.y0;
     for rows in img.data().chunks(row.max(1) * band) {
         let n = (rows.len() / row.max(1)) as u32;
         let y1 = y0.saturating_add(i32::try_from(n).unwrap_or(i32::MAX));
         let alpha = channel.surface.read_region(Rect::new(canvas.x0, y0, canvas.x1, y1));
         let rgb = Image::from_raw(w, n, img.layout(), sample, rows.to_vec())?.to_normalized();
-        let mut vals = Vec::with_capacity(rgb.len() / 3 * 4);
-        for (px, a) in rgb.as_chunks::<3>().0.iter().zip(alpha.chunks_exact(stride)) {
+        let mut vals = Vec::with_capacity(rgb.len() / channels * layout.channels());
+        for (px, a) in rgb.chunks_exact(channels).zip(alpha.chunks_exact(stride)) {
             vals.extend_from_slice(px);
             vals.push(a.first().copied().unwrap_or(1.0));
         }
-        data.extend_from_slice(Image::from_normalized(w, n, ChannelLayout::Rgba, sample, &vals)?.data());
+        data.extend_from_slice(Image::from_normalized(w, n, layout, sample, &vals)?.data());
         y0 = y1;
     }
-    Ok(Image::from_raw(w, h, ChannelLayout::Rgba, sample, data)?.with_icc(img.icc.clone()).with_meta(img.meta.clone()))
+    Ok(Image::from_raw(w, h, layout, sample, data)?.with_icc(img.icc.clone()).with_meta(img.meta.clone()))
 }
 
 /// Encodes a flat codec image as `format`: the fidelity warnings, then the codec. The end of

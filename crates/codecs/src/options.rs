@@ -229,45 +229,304 @@ pub enum DdsCompression {
     Bc2,
     /// BC3 (DXT5): 8 bits per pixel, with smooth interpolated alpha.
     Bc3,
+    /// BC4 (ATI1): 4 bits per pixel, a single interpolated channel; stores the gray channel.
+    Bc4,
+    /// BC5 (ATI2): 8 bits per pixel, two interpolated channels; stores gray and alpha.
+    Bc5,
+    /// BC7: 8 bits per pixel, partitioned endpoints; the best quality RGBA block format.
+    Bc7,
+    /// BC1 block data under the DXT1 name, but the header declares `DDPF_ALPHAPIXELS`: the
+    /// file promises 1-bit punch-through alpha (DXT1a). Plain `bc1` writes no such promise.
+    Bc1a,
+    /// Uncompressed 8-bit alpha only (`DDPF_ALPHA`): the file is a single-channel mask.
+    A8,
 }
 
 impl DdsCompression {
-    pub const ALL: [DdsCompression; 4] = [DdsCompression::None, DdsCompression::Bc1, DdsCompression::Bc2, DdsCompression::Bc3];
+    pub const ALL: [DdsCompression; 9] = [
+        DdsCompression::None,
+        DdsCompression::Bc1,
+        DdsCompression::Bc1a,
+        DdsCompression::Bc2,
+        DdsCompression::Bc3,
+        DdsCompression::Bc4,
+        DdsCompression::Bc5,
+        DdsCompression::Bc7,
+        DdsCompression::A8,
+    ];
 
-    /// The name scripts and the CLI use: `none`, `bc1`, `bc2` or `bc3`.
+    /// The name scripts and the CLI use: `none`, `bc1`, `bc1a`, `bc2`, `bc3`, `bc4`, `bc5`,
+    /// `bc7` or `a8`.
     pub fn name(self) -> &'static str {
         match self {
             DdsCompression::None => "none",
             DdsCompression::Bc1 => "bc1",
+            DdsCompression::Bc1a => "bc1a",
             DdsCompression::Bc2 => "bc2",
             DdsCompression::Bc3 => "bc3",
+            DdsCompression::Bc4 => "bc4",
+            DdsCompression::Bc5 => "bc5",
+            DdsCompression::Bc7 => "bc7",
+            DdsCompression::A8 => "a8",
         }
     }
 
-    /// [`Self::name`] back to a compression, also taking the DXT names (`dxt1`, `dxt3`,
-    /// `dxt5`), in any case. Anything else is `None`.
+    /// [`Self::name`] back to a compression, also taking the DXT and ATI names (`dxt1`,
+    /// `dxt3`, `dxt5`, `ati1`, `ati2`), in any case. Anything else is `None`.
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "none" => Some(DdsCompression::None),
             "bc1" | "dxt1" => Some(DdsCompression::Bc1),
+            "bc1a" | "dxt1a" => Some(DdsCompression::Bc1a),
             "bc2" | "dxt3" => Some(DdsCompression::Bc2),
             "bc3" | "dxt5" => Some(DdsCompression::Bc3),
+            "bc4" | "ati1" | "bc4u" => Some(DdsCompression::Bc4),
+            "bc5" | "ati2" | "bc5u" => Some(DdsCompression::Bc5),
+            "bc7" => Some(DdsCompression::Bc7),
+            "a8" => Some(DdsCompression::A8),
             _ => None,
         }
     }
 
     /// A block compression (lossy), not uncompressed pixels.
     pub fn is_block(self) -> bool {
-        self != DdsCompression::None
+        !matches!(self, DdsCompression::None | DdsCompression::A8)
+    }
+}
+
+/// Block-compression effort for DDS writing: the bc7enc search depth (`uber` passes and
+/// refinements). Only BC7 reads it; BC1–BC5 have a single speed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DdsQuality {
+    /// `uber_level` 0, no least-squares pass, the partition filterbank on.
+    Fastest,
+    /// `uber_level` 2, the partition filterbank on.
+    Normal,
+    /// `uber_level` 3.
+    Production,
+    /// The encoder's defaults: `uber_level` 4 with least squares.
+    #[default]
+    Highest,
+}
+
+impl DdsQuality {
+    pub const ALL: [DdsQuality; 4] = [DdsQuality::Fastest, DdsQuality::Normal, DdsQuality::Production, DdsQuality::Highest];
+
+    /// The name scripts and the CLI use: `fastest`, `normal`, `production` or `highest`.
+    pub fn name(self) -> &'static str {
+        match self {
+            DdsQuality::Fastest => "fastest",
+            DdsQuality::Normal => "normal",
+            DdsQuality::Production => "production",
+            DdsQuality::Highest => "highest",
+        }
+    }
+
+    /// [`Self::name`] back to a quality, also taking the shorter `fast`/`fine`, in any case.
+    /// Anything else is `None`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "fastest" | "fast" => Some(DdsQuality::Fastest),
+            "normal" => Some(DdsQuality::Normal),
+            "production" => Some(DdsQuality::Production),
+            "highest" | "fine" | "finest" => Some(DdsQuality::Highest),
+            _ => None,
+        }
+    }
+}
+
+/// The 2:1 filter the mip chain is generated with, after the NVIDIA Texture Tools
+/// Exporter's list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DdsMipFilter {
+    /// Each texel the average of the 2×2 it covers (the default).
+    #[default]
+    Box,
+    /// A `[1,3,3,1]` tent: a wider footprint than box, less aliasing.
+    Triangle,
+    /// Per-channel minimum of the covered texels (height-map min-clips).
+    Min,
+    /// Per-channel maximum of the covered texels (parallax-occlusion ranges).
+    Max,
+    /// Kaiser-Bessel windowed sinc (the texture tools' usual best).
+    Kaiser,
+    /// Mitchell-Netravali cubic, B = C = 1/3.
+    MitchellNetravali,
+}
+
+impl DdsMipFilter {
+    pub const ALL: [DdsMipFilter; 6] =
+        [DdsMipFilter::Box, DdsMipFilter::Triangle, DdsMipFilter::Min, DdsMipFilter::Max, DdsMipFilter::Kaiser, DdsMipFilter::MitchellNetravali];
+
+    /// The name scripts and the CLI use.
+    pub fn name(self) -> &'static str {
+        match self {
+            DdsMipFilter::Box => "box",
+            DdsMipFilter::Triangle => "triangle",
+            DdsMipFilter::Min => "min",
+            DdsMipFilter::Max => "max",
+            DdsMipFilter::Kaiser => "kaiser",
+            DdsMipFilter::MitchellNetravali => "mitchell",
+        }
+    }
+
+    /// [`Self::name`] back to a filter, in any case. Anything else is `None`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "box" => Some(DdsMipFilter::Box),
+            "triangle" => Some(DdsMipFilter::Triangle),
+            "min" => Some(DdsMipFilter::Min),
+            "max" => Some(DdsMipFilter::Max),
+            "kaiser" => Some(DdsMipFilter::Kaiser),
+            "mitchell" | "mitchell-netravali" | "mitchell_netravali" => Some(DdsMipFilter::MitchellNetravali),
+            _ => None,
+        }
+    }
+}
+
+/// Where a DDS cubemap's six faces live, shared by [`DdsImport`] and [`DdsOptions`]. On
+/// import `Off` reads only the +X face as a plain texture; on export `Off` writes one.
+/// `Layers` moves one layer per face, `Cross` the horizontal-cross sheet — `-X +Z +X -Z`
+/// across the middle row with `+Y` above and `-Y` below `+Z`, faces unrotated — as one 4:3
+/// image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DdsCubeMap {
+    #[default]
+    Off,
+    Layers,
+    Cross,
+}
+
+impl DdsCubeMap {
+    /// The name scripts and the CLI use: `off`, `layers` or `cross`.
+    pub fn name(self) -> &'static str {
+        match self {
+            DdsCubeMap::Off => "off",
+            DdsCubeMap::Layers => "layers",
+            DdsCubeMap::Cross => "cross",
+        }
+    }
+
+    /// [`Self::name`] back to a choice, also taking `faces` for `layers` and `sheet`/`box`
+    /// for `cross`, in any case. Anything else is `None`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "off" | "none" | "2d" => Some(DdsCubeMap::Off),
+            "layers" | "faces" => Some(DdsCubeMap::Layers),
+            "cross" | "sheet" | "box" => Some(DdsCubeMap::Cross),
+            _ => None,
+        }
     }
 }
 
 /// What a DDS file is written with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DdsOptions {
     pub compression: DdsCompression,
-    /// Write the full mip chain down to 1×1, each level a box filter of the one above.
+    /// Write the mip chain (down to [`Self::min_mip_size`], at most [`Self::max_mip_count`]
+    /// levels), each level a [`Self::mip_filter`] of the one above.
     pub mipmaps: bool,
+    /// The encoder's search effort (BC7 only).
+    pub quality: DdsQuality,
+    /// Mark the texture as sRGB. The DX10 header's `_SRGB` DXGI formats express this, so a
+    /// marked texture is written with one; luminance, A8, BC4 and BC5 have no sRGB name and
+    /// are written unchanged.
+    pub srgb: bool,
+    /// Which 2:1 filter generates the mip chain.
+    pub mip_filter: DdsMipFilter,
+    /// Stop the chain before a level whose smaller side falls below this.
+    pub min_mip_size: u32,
+    /// Cap the chain at this many levels; 0 = no cap.
+    pub max_mip_count: u32,
+    /// Filter mip levels in linear light when [`Self::srgb`] marks the texture (stored
+    /// values are EOTF'd, so averaging them directly darkens the chain). Alpha is never
+    /// EOTF'd. Ignored without `srgb`.
+    pub mip_gamma_correct: bool,
+    /// Filter mip levels in premultiplied space so transparent texels do not bleed their
+    /// RGB into the lower levels. A no-op on images with no alpha.
+    pub mip_premult_alpha: bool,
+    /// Store RGB premultiplied by alpha in the file — engines sampling premultiplied
+    /// content expect it (and it is the premultiplied DXT2/DXT4 storage form).
+    pub export_premult_alpha: bool,
+    /// Set `DDPF_NORMAL` in the pixel-format flags; some engines read it for tangent-space
+    /// normal-map detection.
+    pub normal_map: bool,
+    /// Write rows bottom-up (the GL-vs-D3D origin toggle the GIMP plug-in offers).
+    pub flip: bool,
+    /// Write a cubemap: `Layers` takes the document's six bottom-most full-canvas square
+    /// raster layers as the faces `+X -X +Y -Y +Z -Z` in stack order, `Cross` splits a 4:3
+    /// cross-layout sheet. `Off` writes a plain 2D texture.
+    pub cube: DdsCubeMap,
+}
+
+impl Default for DdsOptions {
+    fn default() -> Self {
+        DdsOptions {
+            compression: DdsCompression::None,
+            mipmaps: false,
+            quality: DdsQuality::Highest,
+            srgb: false,
+            mip_filter: DdsMipFilter::Box,
+            min_mip_size: 1,
+            max_mip_count: 0,
+            mip_gamma_correct: true,
+            mip_premult_alpha: true,
+            export_premult_alpha: false,
+            normal_map: false,
+            flip: false,
+            cube: DdsCubeMap::Off,
+        }
+    }
+}
+
+/// How a DDS texture opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DdsImport {
+    /// Where the texture's alpha goes: the layer's transparency (the default), or an "Alpha 1"
+    /// document channel preserving it as editable data — game textures often carry data such
+    /// as specular maps in alpha rather than transparency (the NVIDIA/Intel plug-ins' "load
+    /// transparency as alpha channel"). A cubemap's faces open with their own alpha; each
+    /// face that has data in alpha also gains a "Face ±X Alpha" channel.
+    pub alpha_as_channel: bool,
+    /// A layer per mip level (the Intel Texture Works plugin's choice), not the top level only.
+    /// A cubemap opens a layer per face per level.
+    pub mips_as_layers: bool,
+    /// Flip rows vertically on open (the GIMP plug-in's "load flipped" toggle for textures
+    /// written for the opposite GL/D3D origin convention).
+    pub flip: bool,
+    /// Where a cubemap's faces go: a layer per face (the default), the cross-layout sheet,
+    /// or `Off` for the +X face as a plain texture.
+    pub cube: DdsCubeMap,
+}
+
+impl Default for DdsImport {
+    fn default() -> Self {
+        DdsImport { alpha_as_channel: false, mips_as_layers: false, flip: false, cube: DdsCubeMap::Layers }
+    }
+}
+
+/// What [`crate::dds_info`] reports about a DDS texture, from its header alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DdsInfo {
+    /// The top mip level's size.
+    pub width: u32,
+    pub height: u32,
+    /// The declared mip count (1 = the top level only).
+    pub levels: u32,
+    /// The encoding carries an alpha channel.
+    pub alpha: bool,
+    /// The compression a save could write back (`bc1a` when the header promises
+    /// punch-through alpha); `None` when the encoding has no writable form
+    /// (premultiplied, RXGB/YCoCg, float or signed variants).
+    pub compression: Option<DdsCompression>,
+    /// The DX10 header marks the texture `_SRGB`.
+    pub srgb: bool,
+    /// The header declares a cubemap (DX10 `MISC_TEXTURECUBE` or the legacy
+    /// `DDSCAPS2_CUBEMAP`); [`Self::faces`] counts the stored faces.
+    pub cube: bool,
+    /// Faces the file stores: 6 for a complete cubemap, fewer when the legacy face bits
+    /// mark a partial one, 1 for a plain 2D texture.
+    pub faces: u32,
 }
 
 /// Options for [`crate::encode`].
@@ -297,7 +556,7 @@ pub struct EncodeOptions {
     pub exr_compression: ExrCompression,
     /// DPX bits per sample. `None` follows the image: 8 for 8-bit, 16 otherwise.
     pub dpx_bits: Option<DpxBits>,
-    /// DDS compression and mip chain.
+    /// DDS compression, mip chain, quality and flag choices.
     pub dds: DdsOptions,
     /// Embed the ICC profile when the format supports it.
     pub embed_icc: bool,

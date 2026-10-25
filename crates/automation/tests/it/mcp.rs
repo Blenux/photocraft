@@ -428,9 +428,16 @@ async fn bridge_doc_save_forwards_dds_options() {
     let client = connect(PhotocraftMcp::bridge(&addr, CONTROL_TOKEN).unwrap()).await;
     let saved = json_of(&call(&client, "doc_save", json!({"path": "out.dds", "ddsCompression": "DXT5", "ddsMipmaps": true})).await);
     assert_eq!(saved, json!({"saved": {"path": "out.dds", "ddsCompression": "bc3", "ddsMipmaps": true}}));
-    let r = call(&client, "doc_save", json!({"path": "out.dds", "ddsCompression": "bc7"})).await;
+    let saved = json_of(&call(&client, "doc_save", json!({"path": "out.dds", "ddsCompression": "bc7", "ddsQuality": "fast", "ddsSrgb": true})).await);
+    assert_eq!(saved, json!({"saved": {"path": "out.dds", "ddsCompression": "bc7", "ddsQuality": "fastest", "ddsSrgb": true}}));
+    for c in ["bc9", "DXT9"] {
+        let r = call(&client, "doc_save", json!({"path": "out.dds", "ddsCompression": c})).await;
+        assert_eq!(r.is_error, Some(true), "{c}: {}", text(&r));
+        assert!(text(&r).contains("ddsCompression"), "{c}: {}", text(&r));
+    }
+    let r = call(&client, "doc_save", json!({"path": "out.dds", "ddsQuality": "medium"})).await;
     assert_eq!(r.is_error, Some(true), "{}", text(&r));
-    assert!(text(&r).contains("ddsCompression"), "{}", text(&r));
+    assert!(text(&r).contains("ddsQuality"), "{}", text(&r));
     client.cancel().await.unwrap();
     app.abort();
 }
@@ -446,13 +453,15 @@ async fn headless_doc_save_writes_dds_options() {
         ("doc_export", json!({"path": "plain.dds"}), [0; 4], 1),
         ("doc_export", json!({"path": "bc1.dds", "ddsCompression": "bc1"}), *b"DXT1", 1),
         ("doc_save", json!({"path": "bc3.dds", "ddsCompression": "bc3", "ddsMipmaps": true}), *b"DXT5", 5),
+        ("doc_export", json!({"path": "bc7.dds", "ddsCompression": "bc7"}), *b"DX10", 1),
+        ("doc_export", json!({"path": "srgb.dds", "ddsCompression": "bc1", "ddsSrgb": true}), *b"DX10", 1),
     ] {
         let r = call(&client, tool, params.clone()).await;
         assert_ne!(r.is_error, Some(true), "{params}: {}", text(&r));
         let bytes = std::fs::read(dir.join(params["path"].as_str().unwrap())).unwrap();
         assert_eq!((&bytes[84..88], u32::from_le_bytes(bytes[28..32].try_into().unwrap())), (&fourcc[..], mips), "{params}");
     }
-    let r = call(&client, "doc_export", json!({"path": "bad.dds", "ddsCompression": "bc7"})).await;
+    let r = call(&client, "doc_export", json!({"path": "bad.dds", "ddsCompression": "bc9"})).await;
     assert_eq!(r.is_error, Some(true), "{}", text(&r));
     assert!(!dir.join("bad.dds").exists());
     client.cancel().await.unwrap();

@@ -2547,6 +2547,7 @@ cameraRaw	Color	Kleur
 	File Name	Bestandsnaam
 	File Format	Bestandsformaat
 	Compression	Compressie
+	A8 / alpha only	A8 / alleen alfa
 	Artboards	Tekengebieden
 	Snap to Grid	Uitlijnen op raster
 	Full Screen	Volledig scherm
@@ -4133,6 +4134,39 @@ curves	Smooth	Vloeiend maken
 # DDS Options (#1327)
 	DDS Options	DDS-opties
 	Generate Mipmaps	Mipmaps genereren
+	Box	Box
+	Min	Min.
+	Max	Max.
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	Snelste
+	Production	Productie
+	Highest	Hoogste
+	Filter in linear light	Filteren in lineair licht
+	Filter premultiplied (no alpha bleed)	Premultiplied filteren (geen alfa-doorbloeding)
+	Premultiplied alpha	Premultiplied alfa
+	Normal map	Normal map
+	Flip vertically	Verticaal spiegelen
+	Stop at	Stoppen bij
+	px; at most	px; maximaal
+	levels	niveaus
+
+	Cubemap	Cubemap
+	Faces from layers	Vlakken uit lagen
+
+# DDS Import (#8632)
+	DDS Import	DDS importeren
+	Load transparency as alpha channel	Transparantie als alfakanaal laden
+	Mipmaps as separate layers	Mipmaps als aparte lagen
+	Open cancelled	Openen geannuleerd
+	Open failed: {error}	Openen mislukt: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Vlakken als lagen
+	Cross-layout sheet	Blad in kruisindeling
+	+X face only	Alleen +X-vlak
+	Uncompressed	Ongecomprimeerd
+@plural	{n} mip level|{n} mip levels	{n} mipniveau|{n} mipniveaus
+@plural	{n} face|{n} faces	{n} zijde|{n} zijden
 
 # Color Table (.act) dialog
 	There is no color table to save.	Er is geen kleurtabel om op te slaan.

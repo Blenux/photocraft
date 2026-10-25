@@ -2518,6 +2518,7 @@ cameraRaw	Color	Renk
 	File Name	Dosya Adı
 	File Format	Dosya Formatı
 	Compression	Sıkıştırma
+	A8 / alpha only	A8 / yalnızca alfa
 	Artboards	Çalışma Yüzeyleri
 	Snap to Grid	Izgaraya Yapış
 	Full Screen	Tam Ekran
@@ -4102,6 +4103,38 @@ cameraData	Lens	Lens
 # DDS Options (#1327)
 	DDS Options	DDS Seçenekleri
 	Generate Mipmaps	Mipmap oluştur
+	Box	Kutu
+	Min	Min.
+	Max	Maks.
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	En hızlı
+	Production	Üretim
+	Highest	En yüksek
+	Filter in linear light	Doğrusal ışıkta filtrele
+	Filter premultiplied (no alpha bleed)	Ön çarpımlı filtrele (alfa sızması yok)
+	Premultiplied alpha	Ön çarpımlı alfa
+	Normal map	Normal haritası
+	Flip vertically	Dikey çevir
+	Stop at	Şurada dur
+	px; at most	px; en çok
+	levels	düzey
+	Cubemap	Küpharitası
+	Faces from layers	Katmanlardan yüzler
+
+# DDS Import (#8632)
+	DDS Import	DDS İçe Aktar
+	Load transparency as alpha channel	Saydamlığı alfa kanalı olarak yükle
+	Mipmaps as separate layers	Mipmap'leri ayrı katmanlar olarak
+	Open cancelled	Açma iptal edildi
+	Open failed: {error}	Açma başarısız: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Yüzler katman olarak
+	Cross-layout sheet	Çapraz düzen sayfası
+	+X face only	Yalnızca +X yüzü
+	Uncompressed	Sıkıştırılmamış
+@plural	{n} mip level|{n} mip levels	{n} mip seviyesi
+@plural	{n} face|{n} faces	{n} yüz
 
 # Color Table (.act) dialog
 	There is no color table to save.	Kaydedilecek renk tablosu yok.

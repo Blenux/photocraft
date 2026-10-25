@@ -4051,7 +4051,40 @@ curves	Smooth	スムーズ
 # DDS Options (#1327)
 	DDS Options	DDS オプション
 	Compression	圧縮
+	A8 / alpha only	A8 / アルファのみ
 	Generate Mipmaps	ミップマップを生成
+	Box	ボックス
+	Min	最小
+	Max	最大
+	Kaiser	カイザー
+	Mitchell-Netravali	ミッチェル・ネトラバリ
+	Fastest	最速
+	Production	製品版
+	Highest	最高
+	Filter in linear light	リニアライトでフィルター
+	Filter premultiplied (no alpha bleed)	乗算済みでフィルター（アルファにじみなし）
+	Premultiplied alpha	乗算済みアルファ
+	Normal map	法線マップ
+	Flip vertically	垂直に反転
+	Stop at	最小
+	px; at most	px、最大
+	levels	レベル
+	Cubemap	キューブマップ
+	Faces from layers	レイヤーから各面へ
+
+# DDS Import (#8632)
+	DDS Import	DDS インポート
+	Load transparency as alpha channel	透明部分をアルファチャンネルとして読み込む
+	Mipmaps as separate layers	ミップマップを個別のレイヤーとして
+	Open cancelled	開くのをキャンセルしました
+	Open failed: {error}	開くのに失敗しました: {error}
+	{name} ({width} × {height})	{name}（{width} × {height}）
+	Faces as layers	各面をレイヤーとして
+	Cross-layout sheet	十字配置シート
+	+X face only	+X 面のみ
+	Uncompressed	非圧縮
+@plural	{n} mip level|{n} mip levels	{n} MIPレベル
+@plural	{n} face|{n} faces	{n} 面
 
 # Color Table (.act) dialog
 	There is no color table to save.	保存するカラーテーブルがありません。

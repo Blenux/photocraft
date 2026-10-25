@@ -3280,6 +3280,7 @@ layerLabel	No Color	Sin color
 	File Name	Nombre de archivo
 	File Format	Formato de archivo
 	Compression	Compresión
+	A8 / alpha only	A8 / solo alfa
 	Artboards	Mesas de trabajo
 	Snap to Grid	Ajustar a cuadrícula
 	Full Screen	Pantalla completa
@@ -4335,6 +4336,38 @@ navigator	Zoom	Zoom
 # DDS Options (#1327)
 	DDS Options	Opciones de DDS
 	Generate Mipmaps	Generar mipmaps
+	Box	Caja
+	Min	Mín.
+	Max	Máx.
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	Más rápida
+	Production	Producción
+	Highest	Máxima
+	Filter in linear light	Filtrar en luz lineal
+	Filter premultiplied (no alpha bleed)	Filtrar premultiplicado (sin sangrado de alfa)
+	Premultiplied alpha	Alfa premultiplicado
+	Normal map	Mapa de normales
+	Flip vertically	Voltear verticalmente
+	Stop at	Detener en
+	px; at most	px; como máximo
+	levels	niveles
+	Cubemap	Mapa cúbico
+	Faces from layers	Caras desde capas
+
+# DDS Import (#8632)
+	DDS Import	Importar DDS
+	Load transparency as alpha channel	Cargar transparencia como canal alfa
+	Mipmaps as separate layers	Mipmaps como capas independientes
+	Open cancelled	Apertura cancelada
+	Open failed: {error}	Error al abrir: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Caras como capas
+	Cross-layout sheet	Hoja en cruz
+	+X face only	Solo cara +X
+	Uncompressed	Sin compresión
+@plural	{n} mip level|{n} mip levels	{n} nivel mip|{n} niveles mip
+@plural	{n} face|{n} faces	{n} cara|{n} caras
 
 # Color Table (.act) dialog
 	There is no color table to save.	No hay ninguna tabla de colores para guardar.

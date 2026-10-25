@@ -2717,6 +2717,7 @@ cameraRaw	Yellow	Sárga
 	Compare	Összehasonlítás
 	Compatibility	Kompatibilitás
 	Compression	Tömörítés
+	A8 / alpha only	A8 / csak alfa
 	Conditional Mode Change	Feltételes módváltás
 	Contact Sheet II	Kontaktlap II
 	Content-Aware Fill needs a selection on a pixel layer	A tartalomérzékeny kitöltéshez kijelölés kell egy pixelrétegen
@@ -4290,6 +4291,38 @@ cameraRaw	Yellow	Sárga
 # DDS Options (#1327)
 	DDS Options	DDS-beállítások
 	Generate Mipmaps	Mipmapek létrehozása
+	Box	Doboz
+	Min	Min.
+	Max	Max.
+	Kaiser	Kaiser
+	Mitchell-Netravali	Mitchell-Netravali
+	Fastest	Leggyorsabb
+	Production	Végleges
+	Highest	Legjobb
+	Filter in linear light	Szűrés lineáris fényben
+	Filter premultiplied (no alpha bleed)	Premultiplikált szűrés (alfa-vérzés nélkül)
+	Premultiplied alpha	Premultiplikált alfa
+	Normal map	Normáltérkép
+	Flip vertically	Függőleges tükrözés
+	Stop at	Megállás ennél
+	px; at most	px; legfeljebb
+	levels	szint
+	Cubemap	Cubemap
+	Faces from layers	Lapok rétegekből
+
+# DDS Import (#8632)
+	DDS Import	DDS importálása
+	Load transparency as alpha channel	Átlátszóság betöltése alfacsatornaként
+	Mipmaps as separate layers	Mipmap-ek külön rétegekként
+	Open cancelled	Megnyitás megszakítva
+	Open failed: {error}	A megnyitás sikertelen: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+	Faces as layers	Lapok rétegekként
+	Cross-layout sheet	Kereszt elrendezésű lap
+	+X face only	Csak a +X lap
+	Uncompressed	Tömörítetlen
+@plural	{n} mip level|{n} mip levels	{n} mip-szint
+@plural	{n} face|{n} faces	{n} lap
 
 # Color Table (.act) dialog
 	There is no color table to save.	Nincs menthető színtábla.

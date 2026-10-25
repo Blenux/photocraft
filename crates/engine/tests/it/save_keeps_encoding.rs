@@ -54,7 +54,7 @@ fn a_jpeg_saves_at_its_own_quality() {
 fn a_webp_stays_lossy_or_lossless() {
     let lossy = photocraft_codecs::encode(&photo(), Format::WebP, &EncodeOptions { webp_lossless: false, webp_quality: 60, ..Default::default() }).unwrap();
     let (s, saved) = open_and_save("in.webp", &lossy, "lossy.webp", json!({}));
-    let e = s.active().unwrap().doc.file_encoding;
+    let e = &s.active().unwrap().doc.file_encoding;
     assert_eq!(e.webp_lossless, Some(false));
     let Some(WebpEncoding::Lossy { quality: Some(q) }) = webp_encoding(&saved) else { panic!("saved {:?}", webp_encoding(&saved)) };
     assert!(q.abs_diff(60) <= 2, "lossy WebP at 60 saved at {q}");
