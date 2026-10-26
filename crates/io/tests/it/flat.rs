@@ -1194,7 +1194,9 @@ fn a_stereo_png_keeps_its_stereo_mark_on_save() {
 
 /// #8563: a DDS export writes the document's alpha channel as the texture's alpha, as a 32-bit
 /// Targa does: exactly in an uncompressed texture, to 4 bits in BC2, interpolated in BC3, and on
-/// or off in BC1. With several alpha channels none is written, with a warning.
+/// or off in BC1. BC4 has no channel for it (a warning, none written), BC5 keeps it as the
+/// second data channel and A8 as the file itself. With several alpha channels none is written,
+/// with a warning.
 #[test]
 fn dds_writes_the_alpha_channel_as_the_texture_alpha() {
     use photocraft_codecs::DdsCompression;
@@ -1204,18 +1206,34 @@ fn dds_writes_the_alpha_channel_as_the_texture_alpha() {
         opts.encode.dds.compression = compression;
         let r = export(&d, "a.dds", &opts).unwrap();
         let img = photocraft_codecs::decode(&r.bytes).expect("decode dds");
-        assert_eq!(img.layout(), photocraft_codecs::ChannelLayout::Rgba, "{compression:?}");
         let (w, _) = img.dimensions();
+        if compression == DdsCompression::Bc4 {
+            // One channel and it is the gray: the alpha channel can't be kept, with a warning.
+            assert!(r.warnings.iter().any(|w| w.contains("no alpha")), "{:?}", r.warnings);
+            assert!(!img.layout().has_alpha(), "{compression:?}");
+            continue;
+        }
+        if compression == DdsCompression::Bc5 {
+            // The channel is BC5's second data channel, decoded as green.
+            assert_eq!(img.layout(), photocraft_codecs::ChannelLayout::Rgb, "{compression:?}");
+            for (i, px) in img.data().as_chunks::<3>().0.iter().enumerate() {
+                let x = i as u32 % w;
+                let want = alpha_value(x) * 255.0;
+                assert!((f32::from(px[1]) - want).abs() <= 18.0, "{compression:?} pixel {i}: alpha {} want {want}", px[1]);
+            }
+            continue;
+        }
+        assert_eq!(img.layout(), photocraft_codecs::ChannelLayout::Rgba, "{compression:?}");
         let tolerance = match compression {
-            DdsCompression::None => 1.0,
+            DdsCompression::None | DdsCompression::A8 => 1.0,
             DdsCompression::Bc2 => 9.0,
             _ => 18.0,
         };
         for (i, px) in img.data().as_chunks::<4>().0.iter().enumerate() {
             let x = i as u32 % w;
             let want = alpha_value(x) * 255.0;
-            if compression == DdsCompression::Bc1 && x == 4 {
-                continue; // half opacity sits on BC1's on/off threshold
+            if matches!(compression, DdsCompression::Bc1 | DdsCompression::Bc1a) && x == 4 {
+                continue; // half opacity sits on the on/off threshold
             }
             assert!((f32::from(px[3]) - want).abs() <= tolerance, "{compression:?} pixel {i}: alpha {} want {want}", px[3]);
         }

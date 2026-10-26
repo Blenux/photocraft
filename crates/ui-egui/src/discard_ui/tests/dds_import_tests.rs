@@ -123,7 +123,7 @@ fn a_queued_prompt_sizes_to_its_own_choices() {
     .unwrap();
     h.state_mut().open_file("cube.dds", &cube).unwrap();
     h.run_steps(6);
-    let tall = h.ctx.memory(|m| m.area_rect(egui::Id::new("dds-import"))).unwrap().height();
+    let tall = h.ctx.memory(|m| m.area_rect(egui::Id::unique("dds-import"))).unwrap().height();
     assert!(tall > 240.0, "the cubemap prompt shows its radio section: {tall}");
     h.get_by_label("Cancel").click();
     h.run_steps(3);
@@ -131,6 +131,6 @@ fn a_queued_prompt_sizes_to_its_own_choices() {
     let small = photocraft_codecs::encode(&img, photocraft_codecs::Format::Dds, &photocraft_codecs::EncodeOptions::default()).unwrap();
     h.state_mut().open_file("a.dds", &small).unwrap();
     h.run_steps(6);
-    let short = h.ctx.memory(|m| m.area_rect(egui::Id::new("dds-import"))).unwrap().height();
+    let short = h.ctx.memory(|m| m.area_rect(egui::Id::unique("dds-import"))).unwrap().height();
     assert!(short < tall - 60.0, "the smaller prompt shrinks back: {short} vs {tall}");
 }
