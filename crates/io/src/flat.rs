@@ -1127,9 +1127,7 @@ fn dds_image(doc: &Document, img: Image, compression: DdsCompression, warnings: 
     };
     match alphas.as_slice() {
         [] => Ok(img),
-        [channel] if layout == ChannelLayout::GrayA || img.layout().is_rgb() => {
-            with_alpha_channel(doc, img, channel, layout, "texture", warnings)
-        }
+        [channel] if layout == ChannelLayout::GrayA || img.layout().is_rgb() => with_alpha_channel(doc, img, channel, layout, "texture", warnings),
         [_] => {
             warnings.push("a grayscale DDS keeps the layers' transparency; the alpha channel was not saved".into());
             Ok(img)

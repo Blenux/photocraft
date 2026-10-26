@@ -239,7 +239,8 @@ pub fn fidelity_warnings_with(image: &Image, format: Format, opts: &EncodeOption
         w.push(W::AlphaDiscarded);
     }
     // An IFF/ILBM mask plane holds one bit per pixel.
-    let binary_alpha = matches!(format, Format::Gif | Format::Iff) || (format == Format::Dds && matches!(opts.dds.compression, DdsCompression::Bc1 | DdsCompression::Bc1a));
+    let binary_alpha =
+        matches!(format, Format::Gif | Format::Iff) || (format == Format::Dds && matches!(opts.dds.compression, DdsCompression::Bc1 | DdsCompression::Bc1a));
     if binary_alpha && p.layout.has_alpha() && image.has_translucency() {
         w.push(W::AlphaBinarized);
     }
