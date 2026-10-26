@@ -564,6 +564,7 @@ pub(crate) fn image_to_document(name: &str, img: &Image) -> Result<ImportResult,
         bg
     };
     doc.layers.push(layer);
+    warnings.extend(crate::tiff_layers::channels_from_extras(&mut doc, img));
     doc.icc_profile = img.icc.clone().map(Arc::new);
     doc.metadata.exif = img.meta.exif.clone().map(Arc::new);
     doc.metadata.xmp = img.meta.xmp.as_deref().map(Arc::from);
@@ -980,6 +981,9 @@ pub(crate) fn export_flat_with(doc: &Document, format: Format, opts: &ExportOpti
         img = dds_image(doc, img, resolved.encode.dds.compression, &mut warnings)?;
         return encode_image(&img, format, &resolved, warnings);
     }
+    if format == Format::Tiff {
+        warnings.extend(crate::tiff_layers::stamp_flat_channels(doc, &mut img));
+    }
     encode_image(&img, format, opts, warnings)
 }
 
@@ -1110,20 +1114,26 @@ fn tga_image(doc: &Document, img: Image, bits: Option<TgaBits>, warnings: &mut V
 /// transparency (#8563).
 fn dds_image(doc: &Document, img: Image, compression: DdsCompression, warnings: &mut Vec<String>) -> Result<Image, IoError> {
     let alphas: Vec<&AlphaChannel> = doc.channels.iter().filter(|c| c.spot.is_none()).collect();
-    if alphas.is_empty() {
-        return Ok(img);
-    }
     let layout = match compression {
         DdsCompression::Bc5 => ChannelLayout::GrayA,
         DdsCompression::Bc4 => {
-            let names: Vec<String> = alphas.iter().map(|c| format!("\"{}\"", c.name)).collect();
-            warnings.push(format!("a BC4 DDS texture has no alpha; not saved: {}", names.join(", ")));
+            if !alphas.is_empty() {
+                let names: Vec<String> = alphas.iter().map(|c| format!("\"{}\"", c.name)).collect();
+                warnings.push(format!("a BC4 DDS texture has no alpha; not saved: {}", names.join(", ")));
+            }
             return Ok(img);
         }
         _ => ChannelLayout::Rgba,
     };
     match alphas.as_slice() {
-        [channel] => with_alpha_channel(doc, img, channel, layout, "DDS", warnings),
+        [] => Ok(img),
+        [channel] if layout == ChannelLayout::GrayA || img.layout().is_rgb() => {
+            with_alpha_channel(doc, img, channel, layout, "texture", warnings)
+        }
+        [_] => {
+            warnings.push("a grayscale DDS keeps the layers' transparency; the alpha channel was not saved".into());
+            Ok(img)
+        }
         _ => {
             warnings.push("a DDS texture holds one alpha channel; with several, none was written (as in Photoshop)".into());
             Ok(img)
