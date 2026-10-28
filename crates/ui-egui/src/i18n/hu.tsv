@@ -4415,3 +4415,13 @@ cameraRaw	Yellow	Sárga
 	Font size presets	Betűméret-előbeállítások
 	Leading presets	Sorköz-előbeállítások
 	Tracking presets	Betűköz-előbeállítások
+
+# DDS Import (#8632)
+	DDS Import	DDS importálása
+	Load transparency as alpha channel	Átlátszóság betöltése alfacsatornaként
+	Mipmaps as separate layers	Mipmap-ek külön rétegekként
+	Flip vertically	Függőleges tükrözés
+	Open cancelled	Megnyitás megszakítva
+	Open failed: {error}	A megnyitás sikertelen: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+@plural	{n} mip level|{n} mip levels	{n} mip-szint

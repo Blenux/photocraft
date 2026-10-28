@@ -3185,3 +3185,13 @@ curves	Smooth	平滑
 	Font size presets	字号预设
 	Leading presets	行距预设
 	Tracking presets	字距调整预设
+
+# DDS Import (#8632)
+	DDS Import	DDS 导入
+	Load transparency as alpha channel	将透明度载入为 Alpha 通道
+	Mipmaps as separate layers	Mipmap 作为单独图层
+	Flip vertically	垂直翻转
+	Open cancelled	已取消打开
+	Open failed: {error}	打开失败：{error}
+	{name} ({width} × {height})	{name}（{width} × {height}）
+@plural	{n} mip level|{n} mip levels	{n} 个 Mip 层级

@@ -3721,3 +3721,13 @@ curves	Smooth	매끄럽게
 	Font size presets	글꼴 크기 사전 설정
 	Leading presets	행간 사전 설정
 	Tracking presets	자간 사전 설정
+
+# DDS Import (#8632)
+	DDS Import	DDS 가져오기
+	Load transparency as alpha channel	투명도를 알파 채널로 불러오기
+	Mipmaps as separate layers	밉맵을 개별 레이어로
+	Flip vertically	세로로 뒤집기
+	Open cancelled	열기 취소됨
+	Open failed: {error}	열기 실패: {error}
+	{name} ({width} × {height})	{name}({width} × {height})
+@plural	{n} mip level|{n} mip levels	밉맵 레벨 {n}개

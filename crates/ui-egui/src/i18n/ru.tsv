@@ -4704,3 +4704,13 @@ shape	Appearance	Оформление
 	Font size presets	Наборы размеров шрифта
 	Leading presets	Наборы интерлиньяжа
 	Tracking presets	Наборы трекинга
+
+# DDS Import (#8632)
+	DDS Import	Импорт DDS
+	Load transparency as alpha channel	Загрузить прозрачность как альфа-канал
+	Mipmaps as separate layers	Мип-уровни отдельными слоями
+	Flip vertically	Отразить по вертикали
+	Open cancelled	Открытие отменено
+	Open failed: {error}	Не удалось открыть: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+@plural	{n} mip level|{n} mip levels	{n} MIP-уровень|{n} MIP-уровня|{n} MIP-уровней

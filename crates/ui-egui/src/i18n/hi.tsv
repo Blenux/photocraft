@@ -580,3 +580,13 @@ cameraRaw	Yellow	पीला
 	Target	लक्ष्य
 	Units	इकाइयाँ
 	Demosaic	डिमोज़ेक
+
+# DDS Import (#8632)
+	DDS Import	DDS इम्पोर्ट
+	Load transparency as alpha channel	पारदर्शिता को ऐल्फ़ा चैनल के रूप में लोड करें
+	Mipmaps as separate layers	मिपमैप्स को अलग लेयर्स के रूप में
+	Flip vertically	लंबवत पलटें
+	Open cancelled	खोलना रद्द किया गया
+	Open failed: {error}	खोलने में विफल: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+@plural	{n} mip level|{n} mip levels	{n} मिप स्तर|{n} मिप स्तर

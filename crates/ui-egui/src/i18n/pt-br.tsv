@@ -4431,3 +4431,13 @@ layerLabel	No Color	Sem cor
 	Font size presets	Predefinições de tamanho da fonte
 	Leading presets	Predefinições de entrelinha
 	Tracking presets	Predefinições de tracking
+
+# DDS Import (#8632)
+	DDS Import	Importar DDS
+	Load transparency as alpha channel	Carregar transparência como canal alfa
+	Mipmaps as separate layers	Mipmaps como camadas separadas
+	Flip vertically	Inverter verticalmente
+	Open cancelled	Abertura cancelada
+	Open failed: {error}	Falha ao abrir: {error}
+	{name} ({width} × {height})	{name} ({width} × {height})
+@plural	{n} mip level|{n} mip levels	{n} nível mip|{n} níveis mip
