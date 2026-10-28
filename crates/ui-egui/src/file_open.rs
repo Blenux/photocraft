@@ -232,7 +232,8 @@ impl PhotocraftApp {
         } else if let Some(o) = self.jobs.opens.iter().find(|o| o.path.as_deref().is_some_and(|p| !is_template(p) && same(p))) {
             // A template still loading opens as another Untitled, as it does once loaded.
             self.jobs.focus = Some(o.job);
-        } else {
+        // Parked behind the DDS Import prompt: its modal shows once earlier parked opens are answered.
+        } else if !self.dds_imports.iter().any(|p| p.path.as_deref().is_some_and(|p| !is_template(p) && same(p))) {
             return false;
         }
         // The document count didn't change, so the Home screen wouldn't give way by itself.

@@ -309,9 +309,8 @@ fn import_dds_levels(name: &str, mut levels: Vec<Image>, bytes: &[u8], opts: &Im
         l.locks.transparency = false;
         l.locks.position = false;
     }
-    let strip = |img| dds_alpha(img, !opts.dds.alpha_as_channel);
     for (i, img) in levels.iter().enumerate().skip(1) {
-        let mut s = image_surface(&strip(img), target_layout, csample)?;
+        let mut s = image_surface(img, target_layout, csample)?;
         s.prune();
         r.document.layers.push(Layer::new(format!("Mip {i}"), LayerContent::Raster(s)));
     }

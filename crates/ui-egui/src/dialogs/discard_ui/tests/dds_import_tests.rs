@@ -122,6 +122,23 @@ fn a_dds_dropped_on_a_tab_slot_opens_there_once_answered() {
     assert_eq!(names(h.state()), ["mip.dds", "canvas.psd", "second.png"], "the answered file moved to its slot");
 }
 
+/// A DDS open parked behind the prompt counts as open: the same path asked for again doesn't
+/// queue a second prompt that would open a second copy once answered.
+#[test]
+fn a_parked_dds_open_counts_as_already_open() {
+    let (mut h, _chosen) = app_importing();
+    let dir = std::env::temp_dir().join(format!("photocraft-dds-parked-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("mip.dds");
+    std::fs::write(&file, dds_bytes()).unwrap();
+    let path = file.to_string_lossy().to_string();
+    let app = h.state_mut();
+    app.open_path(&path).unwrap();
+    app.open_path(&path).unwrap();
+    assert_eq!(app.dds_imports.len(), 1, "the repeat found the parked open");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `ddsAlphaChannel`/`ddsMipmaps` on `file.open`/`file.openAs` answer without asking; a texture with
 /// no mip chain and no alpha never asks.
 #[test]

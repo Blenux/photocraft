@@ -68,15 +68,20 @@ fn alpha_as_channel_on_an_opaque_texture_makes_no_channel() {
 }
 
 #[test]
-fn alpha_as_channel_with_mips_keeps_the_top_levels_alpha() {
+fn alpha_as_channel_with_mips_moves_only_the_top_levels_alpha() {
     let opts = ImportOptions { dds: DdsImport { alpha_as_channel: true, mips_as_layers: true, ..Default::default() }, ..Default::default() };
     let r = import_with_options("t.dds", &dds_with_mips(), &opts).unwrap();
     let names: Vec<&str> = r.document.layers.iter().map(|l| l.name.as_str()).collect();
     assert_eq!(names, ["Mip 0", "Mip 1", "Mip 2", "Mip 3", "Mip 4"]);
-    for l in &r.document.layers {
+    // The top level's alpha went to the channel: Mip 0 is opaque.
+    let b = r.document.layers[0].surface().unwrap().content_bounds();
+    let px = r.document.layers[0].surface().unwrap().read_region(b);
+    assert!(px.chunks(4).all(|p| p[3] == 1.0), "Mip 0 is opaque");
+    // The lower levels keep theirs as the layer's transparency rather than losing it.
+    for l in &r.document.layers[1..] {
         let b = l.surface().unwrap().content_bounds();
         let px = l.surface().unwrap().read_region(b);
-        assert!(px.chunks(4).all(|p| p[3] == 1.0), "{} is opaque", l.name);
+        assert!(px.chunks(4).any(|p| p[3] < 1.0), "{} keeps its alpha", l.name);
     }
     assert_eq!(r.document.channels.len(), 1);
 }
