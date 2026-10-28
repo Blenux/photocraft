@@ -205,12 +205,8 @@ fn invoke_file_commands(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, 
             Ok(json!({"dialog": d}))
         }
         "file.open" => {
-            if let Some(path) = params.get("path").and_then(Value::as_str) {
-                let dds = crate::dds_import_ui::params(params)?;
-                open_path_opts(app, path, dds)
-            } else {
-                app.open_dialog_file()
-            }
+            let dds = crate::dds_import_ui::params(params)?;
+            if let Some(path) = params.get("path").and_then(Value::as_str) { open_path_opts(app, path, dds) } else { app.open_dialog_file() }
         }
         "file.import.videoFramesToLayers" if params.get("path").and_then(Value::as_str).is_none() => {
             app.ask_folder(|app, path| app.run("file.import.videoFramesToLayers", json!({"path": path})).map_err(|e| e.to_string()))
