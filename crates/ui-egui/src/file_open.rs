@@ -192,6 +192,11 @@ impl PhotocraftApp {
         // The command line's files open before the first frame, which otherwise applies the
         // interface language: their status lines and notices would come out in English.
         crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.session.prefs().interface.language));
+        self.open_paths_opts(paths, None)
+    }
+
+    /// [`Self::open_paths`] with the DDS import answers `file.open` was scripted.
+    pub(crate) fn open_paths_opts(&mut self, paths: &[String], dds: Option<photocraft_io::DdsImport>) -> usize {
         let mut paths: Vec<String> = paths.iter().map(|p| absolute(p)).collect();
         paths.sort_by(|a, b| natural_cmp(a, b));
         let batch = crate::jobs_ui::begin_batch(self);
@@ -203,7 +208,7 @@ impl PhotocraftApp {
             }
             let order = crate::jobs_ui::OpenOrder { batch, seq };
             let pending = self.jobs.opens.len();
-            match self.open_path(abs) {
+            match self.open_path_opts(abs, dds) {
                 Ok(_) => {
                     opened += 1;
                     // A background open's tab takes its place when it finishes; a document opened

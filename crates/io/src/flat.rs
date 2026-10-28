@@ -312,7 +312,11 @@ fn import_dds_levels(name: &str, mut levels: Vec<Image>, bytes: &[u8], opts: &Im
     for (i, img) in levels.iter().enumerate().skip(1) {
         let mut s = image_surface(img, target_layout, csample)?;
         s.prune();
-        r.document.layers.push(Layer::new(format!("Mip {i}"), LayerContent::Raster(s)));
+        let mut l = Layer::new(format!("Mip {i}"), LayerContent::Raster(s));
+        // Hidden like the plug-ins' mip layers: a visible Mip N would composite over Mip 0 and
+        // change the texture the document shows (and a flattened export writes back).
+        l.visible = false;
+        r.document.layers.push(l);
     }
     Ok(r)
 }

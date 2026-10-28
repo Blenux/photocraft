@@ -123,6 +123,20 @@ fn mipmaps_as_layers_opens_one_layer_per_level() {
 }
 
 #[test]
+fn mip_layers_hide_below_the_top_level() {
+    let opts = ImportOptions { dds: DdsImport { mips_as_layers: true, ..Default::default() }, ..Default::default() };
+    let r = import_with_options("t.dds", &dds_with_mips(), &opts).unwrap();
+    assert!(r.document.layers[0].visible);
+    assert!(r.document.layers[1..].iter().all(|l| !l.visible), "lower mips don't cover Mip 0");
+    // The composite a flattened export writes is the top level alone.
+    let out = export(&r.document, "t.dds", &ExportOptions::default()).unwrap();
+    let px = photocraft_codecs::decode(&out.bytes).unwrap().to_normalized();
+    for i in [0usize, 4, 8] {
+        assert!((px[i * 4] - i as f32 / 255.0).abs() < 0.01 && (px[i * 4 + 1] - (255 - i) as f32 / 255.0).abs() < 0.01, "pixel {i} is Mip 0's");
+    }
+}
+
+#[test]
 fn mips_as_layers_on_a_single_level_texture_is_one_layer() {
     let img = photocraft_codecs::Image::from_u8(4, 4, photocraft_codecs::ChannelLayout::Rgba, [10, 20, 30, 200].repeat(16)).unwrap();
     let b = photocraft_codecs::encode(&img, photocraft_codecs::Format::Dds, &photocraft_codecs::EncodeOptions::default()).unwrap();
