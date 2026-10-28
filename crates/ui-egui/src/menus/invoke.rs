@@ -206,7 +206,7 @@ fn invoke_file_commands(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, 
         }
         "file.open" => {
             if let Some(path) = params.get("path").and_then(Value::as_str) {
-                let dds = crate::dds_import_ui::params(&params)?;
+                let dds = crate::dds_import_ui::params(params)?;
                 open_path_opts(app, path, dds)
             } else {
                 app.open_dialog_file()

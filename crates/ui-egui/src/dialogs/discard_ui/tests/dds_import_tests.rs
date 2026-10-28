@@ -85,6 +85,43 @@ fn cancelling_the_dds_prompt_drops_the_open() {
     assert_eq!(h.state().ui.status, "Open cancelled");
 }
 
+#[derive(Debug)]
+struct FakeDrop(std::path::PathBuf, Result<Vec<u8>, String>);
+
+impl egui::DroppedFile for FakeDrop {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        self.1.clone()
+    }
+}
+
+/// A DDS dropped on a tab slot keeps it through the prompt: the answered file opens there and
+/// files dropped with it take the slots after.
+#[test]
+fn a_dds_dropped_on_a_tab_slot_opens_there_once_answered() {
+    let (mut h, _chosen) = app_importing();
+    let ctx = egui::Context::default();
+    let app = h.state_mut();
+    app.open_bytes("canvas.psd", b"x").unwrap();
+    // One tab at (100, 20)–(200, 46): its left half is slot 0.
+    let tab = egui::Rect::from_min_max(egui::pos2(100.0, 20.0), egui::pos2(200.0, 46.0));
+    let strip = egui::Rect::from_min_max(egui::pos2(92.0, 14.0), egui::pos2(700.0, 50.0));
+    app.tab_strip = Some(crate::canvas::TabStrip { rect: strip, tabs: vec![(0, tab)] });
+    let dropped = |name: &str, bytes: Vec<u8>| -> egui::DroppedFileHandle { std::sync::Arc::new(FakeDrop(name.into(), Ok(bytes))) };
+    app.open_dropped(&ctx, vec![dropped("mip.dds", dds_bytes()), dropped("second.png", b"x".to_vec())], Some(egui::pos2(120.0, 30.0)));
+    let names = |app: &PhotocraftApp| app.session.documents().iter().map(|d| d.doc.name.clone()).collect::<Vec<_>>();
+    assert_eq!(app.dds_imports.front().and_then(|p| p.slot), Some(0), "the parked open keeps the drop's slot");
+    assert_eq!(names(app), ["canvas.psd", "second.png"], "the next file took the slot after");
+    h.run_steps(2);
+    h.get_by_label("DDS Import").click();
+    h.run_steps(2);
+    h.get_by_label("OK").click();
+    h.run_steps(3);
+    assert_eq!(names(h.state()), ["mip.dds", "canvas.psd", "second.png"], "the answered file moved to its slot");
+}
+
 /// `ddsAlphaChannel`/`ddsMipmaps` on `file.open`/`file.openAs` answer without asking; a texture with
 /// no mip chain and no alpha never asks.
 #[test]

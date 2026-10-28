@@ -9,7 +9,7 @@
 //! (`ddsAlphaChannel`, `ddsMipmaps`, `ddsFlip` on `file.open`, `file.openAs`).
 
 use photocraft_engine::jobs::OpenSource;
-use photocraft_io::{DdsImport, DdsInfo};
+use photocraft_io::{DdsCompression, DdsImport, DdsInfo};
 
 use crate::PhotocraftApp;
 
@@ -26,6 +26,8 @@ pub struct Prompt {
     pub options: DdsImport,
     /// Header facts for the dialog, probed without decoding.
     pub info: DdsInfo,
+    /// The tab position a drop on the tabs asked for; the open lands there once answered.
+    pub slot: Option<usize>,
 }
 
 /// The import answers a command's params chose (`"ddsAlphaChannel"`, `"ddsMipmaps"`,
@@ -53,7 +55,7 @@ pub fn wants_path(path: &str) -> Option<DdsInfo> {
 
 /// Park `name`'s open behind the prompt. The queue keeps later opens' prompts in order.
 pub fn park(app: &mut PhotocraftApp, name: String, path: Option<String>, source: OpenSource, info: DdsInfo) {
-    app.dds_imports.push_back(Prompt { name, path, source, options: DdsImport::default(), info });
+    app.dds_imports.push_back(Prompt { name, path, source, options: DdsImport::default(), info, slot: None });
 }
 
 /// Park an open whose bytes are in hand (`bytes` is the whole file), when it has choices to
@@ -70,6 +72,7 @@ pub fn park_bytes(app: &mut PhotocraftApp, name: String, path: Option<String>, b
 
 /// Answers the front prompt and runs its open.
 fn confirm(app: &mut PhotocraftApp, p: Prompt) {
+    let (docs, opens) = (app.session.documents().len(), app.jobs.opens.len());
     let r = if app.background_jobs {
         crate::jobs_ui::start_open_opts(app, &p.name, p.path.clone(), p.source, Some(p.options))
     } else {
@@ -92,6 +95,15 @@ fn confirm(app: &mut PhotocraftApp, p: Prompt) {
     if let Err(e) = r {
         app.ui.status = crate::i18n::fmt(tl!("Open failed: {error}"), &[("error", &e)]);
         app.ui.status_error = true;
+        return;
+    }
+    // A file dropped on the tabs keeps its slot: the background tab it becomes, or the
+    // document an inline open already appended.
+    let Some(slot) = p.slot else { return };
+    if let Some(tab) = app.jobs.opens.get_mut(opens) {
+        tab.slot = Some(slot);
+    } else if app.session.documents().len() > docs {
+        let _ = app.run("document.move", serde_json::json!({"document": docs, "to": slot}));
     }
 }
 
@@ -110,7 +122,13 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
             &[("name", &p.name), ("width", &p.info.width.to_string()), ("height", &p.info.height.to_string())],
         ));
         // What the header holds, like the plug-ins' info line: "BC3 / DXT5 · 10 mip levels".
-        let mut facts = vec![p.info.compression.map(crate::dialogs::dds_options_ui::compression_label).unwrap_or_else(|| tl!("Uncompressed")).to_string()];
+        let mut facts = vec![
+            match p.info.compression {
+                Some(DdsCompression::None) | None => tl!("Uncompressed"),
+                Some(c) => crate::dialogs::dds_options_ui::compression_label(c),
+            }
+            .to_string(),
+        ];
         if p.info.levels > 1 {
             facts.push(crate::i18n::trn(crate::i18n::current(), u64::from(p.info.levels), "{n} mip level", "{n} mip levels"));
         }

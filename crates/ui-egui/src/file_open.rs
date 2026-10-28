@@ -327,9 +327,12 @@ impl PhotocraftApp {
             self.open_bytes(name, &crate::read_dropped(&**f)?)?;
         }
         let Some(slot) = slot else { return Ok(false) };
-        // A DDS with choices parked behind the import prompt: the answered file appends.
+        // A DDS with choices parked behind the import prompt takes the slot once answered.
         if self.dds_imports.len() > parked {
-            return Ok(false);
+            if let Some(prompt) = self.dds_imports.back_mut() {
+                prompt.slot = Some(slot);
+            }
+            return Ok(true);
         }
         if let Some(tab) = self.jobs.opens.get_mut(opens) {
             tab.slot = Some(slot);
