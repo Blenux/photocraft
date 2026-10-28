@@ -28,6 +28,8 @@ pub struct Prompt {
     pub info: DdsInfo,
     /// The tab position a drop on the tabs asked for; the open lands there once answered.
     pub slot: Option<usize>,
+    /// Its place in a set of files opened together, when it is one of several (see [`OpenOrder`]).
+    pub order: Option<crate::jobs_ui::OpenOrder>,
 }
 
 /// The import answers a command's params chose (`"ddsAlphaChannel"`, `"ddsMipmaps"`,
@@ -55,7 +57,7 @@ pub fn wants_path(path: &str) -> Option<DdsInfo> {
 
 /// Park `name`'s open behind the prompt. The queue keeps later opens' prompts in order.
 pub fn park(app: &mut PhotocraftApp, name: String, path: Option<String>, source: OpenSource, info: DdsInfo) {
-    app.dds_imports.push_back(Prompt { name, path, source, options: DdsImport::default(), info, slot: None });
+    app.dds_imports.push_back(Prompt { name, path, source, options: DdsImport::default(), info, slot: None, order: None });
 }
 
 /// Park an open whose bytes are in hand (`bytes` is the whole file), when it has choices to
@@ -95,16 +97,27 @@ fn confirm(app: &mut PhotocraftApp, p: Prompt) {
     if let Err(e) = r {
         app.ui.status = crate::i18n::fmt(tl!("Open failed: {error}"), &[("error", &e)]);
         app.ui.status_error = true;
+        crate::jobs_ui::end_batch(app);
         return;
     }
-    // A file dropped on the tabs keeps its slot: the background tab it becomes, or the
-    // document an inline open already appended.
-    let Some(slot) = p.slot else { return };
+    // Where the open lands: a background open's tab, or the document an inline open already
+    // appended — a drop's tab slot or the place it held in a set opened together.
     if let Some(tab) = app.jobs.opens.get_mut(opens) {
-        tab.slot = Some(slot);
-    } else if app.session.documents().len() > docs {
+        if p.slot.is_some() {
+            tab.slot = p.slot;
+        }
+        if p.order.is_some() {
+            tab.order = p.order;
+        }
+        return;
+    }
+    let slot = p.slot.or_else(|| p.order.and_then(|o| crate::jobs_ui::batch_slot(&mut app.jobs, o)));
+    if let Some(slot) = slot
+        && app.session.documents().len() > docs
+    {
         let _ = app.run("document.move", serde_json::json!({"document": docs, "to": slot}));
     }
+    crate::jobs_ui::end_batch(app);
 }
 
 pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
@@ -161,6 +174,7 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
         confirm(app, p);
     } else if cancel {
         app.dds_imports.pop_front();
+        crate::jobs_ui::end_batch(app);
         app.ui.status = tl!("Open cancelled").into();
         app.ui.status_error = false;
     }

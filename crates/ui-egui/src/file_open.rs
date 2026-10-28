@@ -208,20 +208,28 @@ impl PhotocraftApp {
             }
             let order = crate::jobs_ui::OpenOrder { batch, seq };
             let pending = self.jobs.opens.len();
+            let parked = self.dds_imports.len();
             match self.open_path_opts(abs, dds) {
                 Ok(_) => {
                     opened += 1;
                     // A background open's tab takes its place when it finishes; a document opened
-                    // at once is in place now.
-                    match self.jobs.opens.get_mut(pending) {
-                        Some(tab) => tab.order = Some(order),
-                        None => crate::jobs_ui::opened_in_order(&mut self.jobs, order),
+                    // at once is in place now; a DDS parked behind the import prompt holds its
+                    // place until it is answered.
+                    if self.dds_imports.len() > parked {
+                        if let Some(prompt) = self.dds_imports.back_mut() {
+                            prompt.order = Some(order);
+                        }
+                    } else {
+                        match self.jobs.opens.get_mut(pending) {
+                            Some(tab) => tab.order = Some(order),
+                            None => crate::jobs_ui::opened_in_order(&mut self.jobs, order),
+                        }
                     }
                 }
                 Err(e) => self.open_failed(&display_name(abs), &e),
             }
         }
-        crate::jobs_ui::end_batch(&mut self.jobs);
+        crate::jobs_ui::end_batch(self);
         opened
     }
 

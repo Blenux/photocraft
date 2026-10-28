@@ -139,6 +139,32 @@ fn a_parked_dds_open_counts_as_already_open() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A DDS parked behind the prompt keeps its place in a set opened together: the file after it
+/// opens at once, and the answered DDS lands before it — in name order — not at the end.
+#[test]
+fn a_parked_dds_keeps_its_place_in_an_open_together_set() {
+    let (mut h, _chosen) = app_importing();
+    let dir = std::env::temp_dir().join(format!("photocraft-dds-order-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dds = dir.join("a.dds");
+    let png = dir.join("b.png");
+    std::fs::write(&dds, dds_bytes()).unwrap();
+    std::fs::write(&png, b"x").unwrap();
+    let paths = [dds.to_string_lossy().to_string(), png.to_string_lossy().to_string()];
+    let app = h.state_mut();
+    app.open_paths(&paths);
+    let names = |app: &PhotocraftApp| app.session.documents().iter().map(|d| d.doc.name.clone()).collect::<Vec<_>>();
+    assert_eq!(app.dds_imports.front().and_then(|p| p.order.map(|o| o.seq)), Some(0), "the parked member holds its place");
+    assert_eq!(names(app), ["b.png"], "the member after it opened at once");
+    h.run_steps(2);
+    h.get_by_label("DDS Import").click();
+    h.run_steps(2);
+    h.get_by_label("OK").click();
+    h.run_steps(3);
+    assert_eq!(names(h.state()), ["a.dds", "b.png"], "the answered file moved to its place in the set");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `ddsAlphaChannel`/`ddsMipmaps` on `file.open`/`file.openAs` answer without asking; a texture with
 /// no mip chain and no alpha never asks.
 #[test]

@@ -268,11 +268,28 @@ impl PhotocraftApp {
     /// was scripted.
     fn open_contents_opts(&mut self, mut files: Vec<(String, Vec<u8>)>, dds: Option<photocraft_io::DdsImport>) {
         files.sort_by(|a, b| crate::file_open::natural_cmp(&a.0, &b.0));
-        for (name, bytes) in files {
-            if let Err(e) = self.open_bytes_opts(&name, &bytes, None, dds) {
-                self.open_failed(&name, &e);
+        let batch = crate::jobs_ui::begin_batch(self);
+        for (seq, (name, bytes)) in files.iter().enumerate() {
+            let order = crate::jobs_ui::OpenOrder { batch, seq };
+            let pending = self.jobs.opens.len();
+            let parked = self.dds_imports.len();
+            match self.open_bytes_opts(name, bytes, None, dds) {
+                Ok(_) => {
+                    if self.dds_imports.len() > parked {
+                        if let Some(prompt) = self.dds_imports.back_mut() {
+                            prompt.order = Some(order);
+                        }
+                    } else {
+                        match self.jobs.opens.get_mut(pending) {
+                            Some(tab) => tab.order = Some(order),
+                            None => crate::jobs_ui::opened_in_order(&mut self.jobs, order),
+                        }
+                    }
+                }
+                Err(e) => self.open_failed(name, &e),
             }
         }
+        crate::jobs_ui::end_batch(self);
     }
 
     /// Run `next` on the result of the open dialog's action once it is answered; its result

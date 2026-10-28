@@ -248,15 +248,19 @@ pub(crate) fn opened_in_order(jobs: &mut JobsUi, order: OpenOrder) {
     }
 }
 
-/// Every member of the set has been started: forget it unless some are still opening.
-pub(crate) fn end_batch(jobs: &mut JobsUi) {
-    let opens = &jobs.opens;
-    jobs.batches.retain(|b| opens.iter().any(|o| o.order.is_some_and(|x| x.batch == b.id)));
+/// Every member of the set has been started: forget it unless some are still opening or parked
+/// behind the DDS Import prompt.
+pub(crate) fn end_batch(app: &mut PhotocraftApp) {
+    let opens = &app.jobs.opens;
+    let parked = &app.dds_imports;
+    app.jobs
+        .batches
+        .retain(|b| opens.iter().any(|o| o.order.is_some_and(|x| x.batch == b.id)) || parked.iter().any(|p| p.order.is_some_and(|x| x.batch == b.id)));
 }
 
 /// The tab position for a member of a set that just opened: after the members before it that
 /// have opened, so the set reads in order whichever order the opens finish in.
-fn batch_slot(jobs: &mut JobsUi, order: OpenOrder) -> Option<usize> {
+pub(crate) fn batch_slot(jobs: &mut JobsUi, order: OpenOrder) -> Option<usize> {
     let batch = jobs.batches.iter_mut().find(|b| b.id == order.batch)?;
     let slot = batch.base + batch.opened.iter().filter(|s| **s < order.seq).count();
     batch.opened.push(order.seq);
@@ -268,7 +272,7 @@ fn batch_slot(jobs: &mut JobsUi, order: OpenOrder) -> Option<usize> {
 pub(crate) fn finish_open_tab(app: &mut PhotocraftApp, tab: &OpenTab, v: &Value) -> Result<(), String> {
     let slot = tab.slot.or_else(|| tab.order.and_then(|o| batch_slot(&mut app.jobs, o)));
     let r = finish_open(app, &tab.name, tab.path.as_deref(), v, slot);
-    end_batch(&mut app.jobs);
+    end_batch(app);
     r
 }
 
@@ -522,7 +526,7 @@ fn on_event(app: &mut PhotocraftApp, ctx: &egui::Context, e: JobEvent) {
                 app.ui.status_error = false;
             }
         }
-        end_batch(&mut app.jobs);
+        end_batch(app);
         return;
     }
     match e.outcome {
