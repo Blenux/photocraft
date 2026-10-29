@@ -95,8 +95,7 @@ fn confirm(app: &mut PhotocraftApp, p: Prompt) {
         app.open_bytes_opts(&p.name, &bytes, p.path.as_deref(), Some(p.options)).map(|_| ())
     };
     if let Err(e) = r {
-        app.ui.status = crate::i18n::fmt(tl!("Open failed: {error}"), &[("error", &e)]);
-        app.ui.status_error = true;
+        app.open_failed(&p.name, &e);
         crate::jobs_ui::end_batch(app);
         return;
     }
