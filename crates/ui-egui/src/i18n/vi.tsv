@@ -9,8 +9,8 @@
 #   escapes  \n  \t  \\  inside a column. `{name}` placeholders must appear in both columns.
 #   lines starting with # and blank lines are ignored.
 #
-# Status: complete. Every source key is translated (`complete_menus`), and the coverage test in
-# xtask/src/i18n_coverage.rs keeps it that way: new `tl!` strings need a Vietnamese row.
+# Status: complete when last measured. `cargo xtask i18n-coverage` lists any `tl!` string without a
+# Vietnamese row; a missing row shows in English.
 #
 # Clean-room: every entry was written from the plain meaning of the English label using ordinary
 # Vietnamese computing and image-editing vocabulary. No proprietary localisation resource, string

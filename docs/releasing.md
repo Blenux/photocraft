@@ -263,7 +263,8 @@ Why these formats:
   ```
 
   Sandbox permissions (justified in the manifest): Wayland with X11 fallback, IPC (X11
-  shared memory), `dri` for the GPU, and read/write access to Pictures and Documents. Every
+  shared memory), `dri` for the GPU, the CUPS socket, Avahi and `~/.cups` (read-only) for
+  printing, and read/write access to Pictures and Documents. Every
   other file goes through the file-chooser and document portals. Network access enables update
   checks and makes the optional loopback `--control` server reachable from the host. Host fonts
   are read from `/run/host/fonts` and `/run/host/user-fonts`. Locally (on Linux, with `flatpak` and
