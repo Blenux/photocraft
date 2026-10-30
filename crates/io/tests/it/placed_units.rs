@@ -89,6 +89,14 @@ fn warp_none(bounds: [f64; 4]) -> Descriptor {
         )
 }
 
+/// Writes a demo PNG next to `dir` only when `PHOTOCRAFT_PLACED_UNITS_OUT` names a directory —
+/// the visual-review artifacts stay out of the default `cargo test` run.
+fn keep(name: &str, bytes: &[u8]) {
+    if let Ok(dir) = std::env::var("PHOTOCRAFT_PLACED_UNITS_OUT") {
+        std::fs::write(std::path::Path::new(&dir).join(format!("photocraft-10207-{name}.png")), bytes).unwrap();
+    }
+}
+
 fn red(side: i32) -> Surface {
     let mut s = Surface::new(PixelFormat::new(ColorMode::Rgb, SampleType::U8, true));
     s.fill_rect(Rect::new(0, 0, side, side), &[1.0, 0.0, 0.0, 1.0]);
@@ -101,6 +109,7 @@ fn about(b: Rect, x0: i32, y0: i32, x1: i32, y1: i32) {
 
 /// Before/after PNGs of the rotated `SoLd` (#10253's shape) for visual review: the same
 /// descriptor rendered with `placed_size = None` (the old code's behaviour) and `Some`.
+/// Writes into `PHOTOCRAFT_PLACED_UNITS_OUT` when set.
 #[test]
 fn demo_rotated_sold_before_after_pngs() {
     let (c, s) = (30.0f64.to_radians().cos(), 30.0f64.to_radians().sin());
@@ -133,12 +142,13 @@ fn demo_rotated_sold_before_after_pngs() {
         let mut doc = photocraft_doc::Document::new(tag, photocraft_geom::Size::new(64, 64), ColorMode::Rgb, SampleType::U8);
         doc.layers.push(photocraft_doc::Layer::new(tag, photocraft_doc::LayerContent::Raster(canvas)));
         let png = photocraft_io::export(&doc, "png", &Default::default()).unwrap().bytes;
-        std::fs::write(format!("/tmp/photocraft-10207-{tag}.png"), &png).unwrap();
+        keep(tag, &png);
     }
 }
 
 /// The warped "after" (#10207's shape): a fold mesh over an 8-unit box with a 16 px source;
 /// the matching before-image is rendered by the same descriptor under the pre-fix code.
+/// Writes into `PHOTOCRAFT_PLACED_UNITS_OUT` when set.
 #[test]
 fn demo_warped_sold_after_png() {
     // A pronounced curl: the bottom control row folds back over the top (y -6).
@@ -177,7 +187,7 @@ fn demo_warped_sold_after_png() {
         let mut doc = photocraft_doc::Document::new(tag, photocraft_geom::Size::new(64, 64), ColorMode::Rgb, SampleType::U8);
         doc.layers.push(photocraft_doc::Layer::new(tag, photocraft_doc::LayerContent::Raster(canvas)));
         let png = photocraft_io::export(&doc, "png", &Default::default()).unwrap().bytes;
-        std::fs::write(format!("/tmp/photocraft-10207-{tag}.png"), &png).unwrap();
+        keep(tag, &png);
     }
 }
 
