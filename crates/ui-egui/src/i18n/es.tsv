@@ -4425,7 +4425,7 @@ navigator	Zoom	Zoom
 	Select and Mask was closed: another layer was selected	Se cerró Seleccionar y aplicar máscara: se seleccionó otra capa
 	Select Layer Under Cursor	Seleccionar capa bajo el cursor
 	Drag to move the selected path	Arrastre para mover el trazado seleccionado
-
+	Edit Brush…	Editar pincel…
 # DDS Import (#8632)
 	DDS Import	Importar DDS
 	Load transparency as alpha channel	Cargar transparencia como canal alfa
