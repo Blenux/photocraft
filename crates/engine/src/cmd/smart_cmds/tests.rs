@@ -269,6 +269,44 @@ fn converting_a_smart_object_with_open_contents_editor_is_refused() {
     assert!(inner.layers.iter().any(|l| matches!(l.content, LayerContent::Smart(_))), "closing the editor lets the wrap proceed");
 }
 
+/// An "Underlying Layer" Blend If range and a channel exclusion look at the backdrop: converting
+/// moves them to the smart layer (which keeps the same backdrop) while the contents keep only the
+/// layer's own ranges, so the composite doesn't change (CodeRabbit, #10407).
+#[test]
+fn convert_to_smart_object_moves_backdrop_dependent_blending_to_the_smart_layer() {
+    let mut s = session(8);
+    s.edit("setup", |doc, active| {
+        let top = active.unwrap();
+        for l in doc.layers.iter_mut() {
+            if l.id == top {
+                l.surface_mut().unwrap().fill_rect(Rect::new(0, 0, W, H), &[0.8, 0.3, 0.3, 1.0]);
+                l.blend_if.set(0, [BlendRange { black: [40, 60], white: [200, 255] }, BlendRange { black: [100, 140], white: [255, 255] }]);
+                l.excluded_channels = 4;
+            } else {
+                let surf = l.surface_mut().unwrap();
+                surf.fill_rect(Rect::new(0, 0, W / 2, H), &[0.02, 0.02, 0.02, 1.0]);
+                surf.fill_rect(Rect::new(W / 2, 0, W, H), &[1.0, 1.0, 1.0, 1.0]);
+            }
+        }
+        Ok(())
+    })
+    .unwrap();
+    let before = flat(&s);
+    convert(&mut s);
+
+    let d = s.active().unwrap();
+    let so = d.doc.layer(d.active_layer.unwrap()).unwrap();
+    assert_eq!(so.blend_if.get(0), [BlendRange::FULL, BlendRange { black: [100, 140], white: [255, 255] }]);
+    assert_eq!(so.excluded_channels, 4);
+    let LayerContent::Smart(sm) = &so.content else { panic!("not smart") };
+    let SmartSource::Embedded { file_name, bytes } = &sm.source else { panic!("not embedded") };
+    let inner = decode_source(file_name, bytes).unwrap();
+    let inner = inner.layers.first().unwrap();
+    assert_eq!(inner.blend_if.get(0), [BlendRange { black: [40, 60], white: [200, 255] }, BlendRange::FULL]);
+    assert_eq!(inner.excluded_channels, 0);
+    assert!(max_diff(&flat(&s), &before) < 1e-5, "converting does not change the composite");
+}
+
 #[test]
 fn convert_to_smart_object_stays_enabled_for_a_selection_that_includes_a_smart_object() {
     let mut s = session(8);

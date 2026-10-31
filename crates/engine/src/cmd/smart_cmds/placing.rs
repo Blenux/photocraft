@@ -1,8 +1,8 @@
 use super::contents::contents_editor_open;
 use super::source::{SourceImage, buffer_to_surface, cache_key, cache_put, source_bytes};
 use super::{
-    Affine, Arc, BlendMode, Document, EngineError, Homography, Layer, LayerContent, LayerId, PLACED_KEYS, Rect, Result, Session, Size, SmartContentsId,
-    SmartObject, SmartSource, Surface, Value, encode_source, json, layer_param, other, translate_surface,
+    Affine, Arc, BlendIf, BlendMode, BlendRange, Document, EngineError, Homography, Layer, LayerContent, LayerId, PLACED_KEYS, Rect, Result, Session, Size,
+    SmartContentsId, SmartObject, SmartSource, Surface, Value, encode_source, json, layer_param, other, translate_surface,
 };
 
 /// Rounds float noise off a composed transform (scale 0.1 then 10 should be exactly 1), so
@@ -153,7 +153,7 @@ pub fn layer_to_smart(doc: &Document, l: &Layer) -> Result<Layer> {
 /// at its top level, as Photoshop does when several layers are converted: no wrapper group. The
 /// nested document is cropped to the rendered bounds and the cache is the exact composite (the
 /// same as the layers inside a pass-through group). The smart layer is visible, opaque and Normal.
-pub fn layers_to_smart(doc: &Document, name: &str, layers: Vec<Layer>) -> Result<Layer> {
+pub fn layers_to_smart(doc: &Document, name: &str, mut layers: Vec<Layer>) -> Result<Layer> {
     let canvas = doc.bounds();
     let mut sub = Document::new(format!("{name}.pcraft"), doc.size, doc.mode, doc.depth);
     sub.resolution_dpi = doc.resolution_dpi;
@@ -168,6 +168,18 @@ pub fn layers_to_smart(doc: &Document, name: &str, layers: Vec<Layer>) -> Result
     }
     let has_fx = layers.iter().any(|l| any_layer(l, &|x| x.effects.enabled && !x.effects.items.is_empty()));
     let region = layers.iter().map(|l| subtree_bounds(l, canvas)).fold(canvas, |a, b| a.union(&b)).inflate(if has_fx { 256 } else { 0 });
+    // The bottom layer's "Underlying Layer" Blend If ranges and excluded channels blended with
+    // the backdrop the layers had in `doc`; inside the new document there is only transparency.
+    // They move to the smart layer, which keeps the same backdrop (#10407 review).
+    let mut backdrop_blend_if = BlendIf::default();
+    let mut backdrop_channels = 0;
+    if let Some(bottom) = layers.first_mut() {
+        for (i, [this, under]) in std::mem::take(&mut bottom.blend_if.ranges).into_iter().enumerate() {
+            backdrop_blend_if.set(i, [BlendRange::FULL, under]);
+            bottom.blend_if.set(i, [this, BlendRange::FULL]);
+        }
+        backdrop_channels = std::mem::take(&mut bottom.excluded_channels);
+    }
     sub.layers = layers;
 
     let buf = photocraft_compose::render(&sub, region);
@@ -194,7 +206,10 @@ pub fn layers_to_smart(doc: &Document, name: &str, layers: Vec<Layer>) -> Result
     cache_put(cache_key(&bytes, fmt), SourceImage { surface: Arc::new(translate_surface(&cache, -b.x0, -b.y0)), bounds: sub.bounds() });
 
     let source = SmartSource::Embedded { file_name: sub.name.clone(), bytes: Arc::new(bytes) };
-    Ok(Layer::new(name, LayerContent::Smart(SmartObject::new(source, Affine::translate(b.x0 as f64, b.y0 as f64), Some(cache)))))
+    let mut out = Layer::new(name, LayerContent::Smart(SmartObject::new(source, Affine::translate(b.x0 as f64, b.y0 as f64), Some(cache))));
+    out.blend_if = backdrop_blend_if;
+    out.excluded_channels = backdrop_channels;
+    Ok(out)
 }
 
 pub(super) fn convert(s: &mut Session, p: &Value) -> Result<Value> {
