@@ -49,11 +49,11 @@ pub struct CropState {
     /// `UiState::crop_rect` is the untouched default frame ([`ensure_frame`]): a drag inside it
     /// draws a new frame (as in Photoshop) instead of moving it, and committing it does nothing.
     pub default_frame: bool,
-    /// The document (index and size) the default frame was made for.
-    frame_for: Option<(usize, u32, u32)>,
+    /// The document (identity and size) the default frame was made for.
+    frame_for: Option<(photocraft_doc::DocId, u32, u32)>,
     /// Esc dismissed the frame (Photoshop keeps the border hidden until the next draw, #10370):
-    /// the document (index, size, revision) it was cancelled on.
-    cancelled: Option<(usize, u32, u32, u64)>,
+    /// the document (identity, size, revision) it was cancelled on.
+    cancelled: Option<(photocraft_doc::DocId, u32, u32, u64)>,
     /// The frame is being edited (pressed since it was made): the canvas shows what lies past it.
     pub editing: bool,
     /// The document the pending frame (or gesture) belongs to ([`cancel_stale`], #1918).
@@ -350,10 +350,11 @@ pub fn ensure_frame(app: &mut PhotocraftApp) {
     crate::crop_mode::sync(app, None);
 }
 
-/// The document a crop state is bound to: index, size and revision, so an edit or another
-/// document re-arms it.
-fn frame_key(app: &PhotocraftApp) -> Option<(usize, u32, u32, u64)> {
-    app.session.active_index().zip(app.session.active()).map(|(i, st)| (i, st.doc.size.width, st.doc.size.height, st.revision))
+/// The document a crop state is bound to: identity, size and revision, so an edit or another
+/// document re-arms it. Identity, not the tab index: closing a tab slides the next document
+/// into the same slot.
+fn frame_key(app: &PhotocraftApp) -> Option<(photocraft_doc::DocId, u32, u32, u64)> {
+    app.session.active().map(|st| (st.doc.id, st.doc.size.width, st.doc.size.height, st.revision))
 }
 
 fn frame(app: &mut PhotocraftApp) {
@@ -380,7 +381,7 @@ fn frame(app: &mut PhotocraftApp) {
         app.ui.crop_angle = 0.0;
     }
     let ckey = frame_key(app);
-    let key = ckey.map(|(i, w, h, _)| (i, w, h));
+    let key = ckey.map(|(id, w, h, _)| (id, w, h));
     // Another document (or a resized one) gets its own default frame.
     if app.crop.default_frame && app.crop.frame_for != key && app.crop.drag.is_none() {
         app.ui.crop_rect = None;

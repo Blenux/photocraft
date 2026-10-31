@@ -191,6 +191,25 @@ fn escape_hides_the_frame_until_the_next_draw() {
     assert_eq!(app.ui.crop_rect, Some([20.0, 10.0, 100.0, 50.0]));
 }
 
+/// The dismissal is bound to the document's identity, not its tab slot: closing the cancelled
+/// document slides the next same-sized, unedited document into the same index, and it must
+/// still get its own frame.
+#[test]
+fn a_dismissed_frame_does_not_hide_the_next_documents() {
+    let mut app = app(SampleType::U8);
+    let doc = Document::with_background("other", Size::new(200, 100), ColorMode::Rgb, SampleType::U8, Color::WHITE);
+    app.session.add_document(doc, None);
+    assert!(app.session.set_active(0));
+    ensure_frame(&mut app);
+    cancel(&mut app);
+    ensure_frame(&mut app);
+    assert!(app.ui.crop_rect.is_none());
+    app.session.close(0);
+    app.sync_views();
+    ensure_frame(&mut app);
+    assert!(app.ui.crop_rect.is_some(), "the document slid into the slot gets its own frame");
+}
+
 #[test]
 fn hit_test_finds_handles_inside_and_outside() {
     let r = [10.0, 10.0, 110.0, 60.0];
