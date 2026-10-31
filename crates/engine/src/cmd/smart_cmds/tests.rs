@@ -223,12 +223,24 @@ fn empty_layer_cannot_be_converted() {
 }
 
 #[test]
-fn convert_to_smart_object_is_disabled_for_a_layer_that_is_already_smart() {
+fn converting_a_smart_object_wraps_it_in_another_smart_object() {
     let mut s = session(8);
     paint(&mut s);
-    assert!(s.is_enabled("layer.smartObjects.convertToSmartObject"));
     convert(&mut s);
-    assert!(!s.is_enabled("layer.smartObjects.convertToSmartObject"));
+    let inner_id = s.active().unwrap().active_layer.unwrap();
+    let before = flat(&s);
+
+    // Photoshop keeps Convert to Smart Object enabled on a smart object and nests it (#10378).
+    assert!(s.is_enabled("layer.smartObjects.convertToSmartObject"));
+    let outer_id = LayerId(convert(&mut s));
+    assert_ne!(outer_id, inner_id);
+    let sm = active_smart(&s);
+    let SmartSource::Embedded { file_name, bytes } = &sm.source else { panic!("not embedded") };
+    let inner = decode_source(file_name, bytes).unwrap();
+    assert!(inner.layers.iter().any(|l| matches!(l.content, LayerContent::Smart(_))), "the wrapped contents keep the smart object");
+    assert!(max_diff(&flat(&s), &before) < 1e-6, "wrapping does not change the render");
+    s.undo();
+    assert!(max_diff(&flat(&s), &before) < 1e-6);
 }
 
 #[test]
