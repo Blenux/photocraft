@@ -210,7 +210,7 @@ pub(super) fn convert(s: &mut Session, p: &Value) -> Result<Value> {
             if let LayerContent::Smart(sm) = &l.content
                 && contents_editor_open(s, d.doc.id, sm.contents_id)
             {
-                return Err(other(format!("\"{}\"'s contents are open in an Edit Contents document; save or close it before converting", l.name)));
+                return Err(other(format!("\"{}\"'s contents are open in an Edit Contents document; save any changes and close it before converting", l.name)));
             }
             if let Some(ch) = l.children() {
                 stack.extend(ch);
