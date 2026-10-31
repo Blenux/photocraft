@@ -74,7 +74,7 @@ pub fn park_bytes(app: &mut PhotocraftApp, name: String, path: Option<String>, b
 
 /// Answers the front prompt and runs its open.
 fn confirm(app: &mut PhotocraftApp, p: Prompt) {
-    let (docs, opens) = (app.session.documents().len(), app.jobs.opens.len());
+    let (docs, opens, held) = (app.session.documents().len(), app.jobs.opens.len(), app.held_opens.len());
     let r = if app.background_jobs {
         crate::jobs_ui::start_open_opts(app, &p.name, p.path.clone(), p.source, Some(p.options))
     } else {
@@ -108,6 +108,15 @@ fn confirm(app: &mut PhotocraftApp, p: Prompt) {
         if p.order.is_some() {
             tab.order = p.order;
         }
+        return;
+    }
+    // A Color Settings or damage prompt can hold the open back: no document was appended to
+    // move, so the slot rides the Held and applies when the prompt resolves.
+    if app.held_opens.len() > held {
+        if let Some(h) = app.held_opens.back_mut() {
+            h.slot = p.slot.or_else(|| p.order.and_then(|o| crate::jobs_ui::batch_slot(&mut app.jobs, o)));
+        }
+        crate::jobs_ui::end_batch(app);
         return;
     }
     let slot = p.slot.or_else(|| p.order.and_then(|o| crate::jobs_ui::batch_slot(&mut app.jobs, o)));

@@ -334,7 +334,7 @@ impl PhotocraftApp {
     /// background opens). True when it took the slot.
     fn open_dropped_file(&mut self, f: &egui::DroppedFileHandle, name: &str, slot: Option<usize>) -> Result<bool, String> {
         // Opens append: a background open's tab, or a document.
-        let (docs, opens, parked) = (self.session.documents().len(), self.jobs.opens.len(), self.dds_imports.len());
+        let (docs, opens, parked, held) = (self.session.documents().len(), self.jobs.opens.len(), self.dds_imports.len(), self.held_opens.len());
         if f.path().is_absolute() {
             self.open_path(&path_text(f.path(), false)?)?;
         } else {
@@ -350,6 +350,14 @@ impl PhotocraftApp {
         }
         if let Some(tab) = self.jobs.opens.get_mut(opens) {
             tab.slot = Some(slot);
+            return Ok(true);
+        }
+        // A Color Settings or damage prompt held the open back: no document was appended to
+        // move, so the slot rides the Held and applies when the prompt resolves.
+        if self.held_opens.len() > held {
+            if let Some(h) = self.held_opens.back_mut() {
+                h.slot = Some(slot);
+            }
             return Ok(true);
         }
         Ok(self.run("document.move", serde_json::json!({"document": docs, "to": slot})).is_ok())
