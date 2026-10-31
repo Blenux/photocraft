@@ -168,12 +168,16 @@ pub fn layers_to_smart(doc: &Document, name: &str, mut layers: Vec<Layer>) -> Re
     }
     let has_fx = layers.iter().any(|l| any_layer(l, &|x| x.effects.enabled && !x.effects.items.is_empty()));
     let region = layers.iter().map(|l| subtree_bounds(l, canvas)).fold(canvas, |a, b| a.union(&b)).inflate(if has_fx { 256 } else { 0 });
-    // The bottom layer's "Underlying Layer" Blend If ranges and excluded channels blended with
-    // the backdrop the layers had in `doc`; inside the new document there is only transparency.
-    // They move to the smart layer, which keeps the same backdrop (#10407 review).
+    // A single converted layer's "Underlying Layer" Blend If ranges and excluded channels
+    // blended with the backdrop it had in `doc`; inside the new document there is only
+    // transparency. They move to the smart layer, which keeps the same backdrop (#10407
+    // review). For several layers they would wrongly apply to the whole composite, so they
+    // stay inside with their layer.
     let mut backdrop_blend_if = BlendIf::default();
     let mut backdrop_channels = 0;
-    if let Some(bottom) = layers.first_mut() {
+    if layers.len() == 1
+        && let Some(bottom) = layers.first_mut()
+    {
         for (i, [this, under]) in std::mem::take(&mut bottom.blend_if.ranges).into_iter().enumerate() {
             backdrop_blend_if.set(i, [BlendRange::FULL, under]);
             bottom.blend_if.set(i, [this, BlendRange::FULL]);

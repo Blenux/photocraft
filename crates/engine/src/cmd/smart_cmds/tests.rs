@@ -307,6 +307,41 @@ fn convert_to_smart_object_moves_backdrop_dependent_blending_to_the_smart_layer(
     assert!(max_diff(&flat(&s), &before) < 1e-5, "converting does not change the composite");
 }
 
+/// The move is scoped to converting one layer: combining layers leaves each layer's
+/// backdrop-dependent settings on it, so they can't act on the other layers through the
+/// smart layer's own composite (CodeRabbit, #10407).
+#[test]
+fn converting_several_layers_keeps_backdrop_dependent_blending_inside() {
+    let mut s = session(8);
+    s.edit("setup", |doc, active| {
+        let top = active.unwrap();
+        for l in doc.layers.iter_mut() {
+            l.surface_mut().unwrap().fill_rect(Rect::new(0, 0, W, H), &[0.7, 0.4, 0.2, 1.0]);
+            if l.id != top {
+                l.blend_if.set(0, [BlendRange::FULL, BlendRange { black: [100, 140], white: [255, 255] }]);
+                l.excluded_channels = 2;
+            }
+        }
+        Ok(())
+    })
+    .unwrap();
+    let ids: Vec<LayerId> = s.active().unwrap().doc.layers.iter().map(|l| l.id).collect();
+    let top = *ids.last().unwrap();
+    crate::layer_multi_cmds::set_selection(&mut s, ids, Some(top), None).unwrap();
+    convert(&mut s);
+
+    let d = s.active().unwrap();
+    let so = d.doc.layer(d.active_layer.unwrap()).unwrap();
+    assert!(so.blend_if.is_default());
+    assert_eq!(so.excluded_channels, 0);
+    let LayerContent::Smart(sm) = &so.content else { panic!("not smart") };
+    let SmartSource::Embedded { file_name, bytes } = &sm.source else { panic!("not embedded") };
+    let inner = decode_source(file_name, bytes).unwrap();
+    let bottom = inner.layers.first().unwrap();
+    assert_eq!(bottom.blend_if.get(0), [BlendRange::FULL, BlendRange { black: [100, 140], white: [255, 255] }]);
+    assert_eq!(bottom.excluded_channels, 2);
+}
+
 #[test]
 fn convert_to_smart_object_stays_enabled_for_a_selection_that_includes_a_smart_object() {
     let mut s = session(8);
