@@ -288,7 +288,13 @@ fn level_image(p: &Parsed, index: u32, limits: &Limits) -> Result<Image, CodecEr
 /// encoding a save could write back, for the options dialog's match-source defaults.
 pub(crate) fn info(b: &[u8]) -> Result<crate::options::DdsInfo, CodecError> {
     let p = parse(b)?;
-    Ok(crate::options::DdsInfo { width: p.width, height: p.height, levels: p.levels, alpha: p.encoding.has_alpha(), compression: p.encoding.compression() })
+    Ok(crate::options::DdsInfo {
+        width: p.width,
+        height: p.height,
+        levels: p.mip_count(),
+        alpha: p.encoding.has_alpha(),
+        compression: p.encoding.compression(),
+    })
 }
 
 fn decode_image(encoding: Encoding, data: &[u8], width: u32, height: u32, row_pitch: usize) -> Result<Image, CodecError> {

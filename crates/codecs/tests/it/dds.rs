@@ -331,6 +331,7 @@ fn a_declared_mip_count_is_capped_at_the_chain() {
     let levels = photocraft_codecs::decode_dds_levels(&b, &DecodeOptions::default()).unwrap();
     assert_eq!(levels.len(), 3, "4×4 → 4×4, 2×2, 1×1");
     assert_eq!(levels[2].dimensions(), (1, 1));
+    assert_eq!(photocraft_codecs::dds_info(&b).unwrap().levels, 3, "the prompt shows the decodable count");
 }
 
 #[test]
