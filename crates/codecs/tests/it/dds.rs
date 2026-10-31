@@ -4,6 +4,7 @@ use photocraft_codecs::{
 };
 
 const DDPF_ALPHAPIXELS: u32 = 0x1;
+const DDPF_ALPHA: u32 = 0x2;
 const DDPF_FOURCC: u32 = 0x4;
 const DDPF_RGB: u32 = 0x40;
 const DDPF_LUMINANCE: u32 = 0x2_0000;
@@ -367,9 +368,9 @@ fn refuses_cubemaps_arrays_and_volumes() {
     unsupported(&dx10(4, 4, 71, 3, 0x4, 1), "cubemap");
     unsupported(&dx10(4, 4, 71, 3, 0, 6), "array");
     unsupported(&dx10(4, 4, 71, 4, 0, 1), "2D");
+    unsupported(&dx10(4, 4, 95, 3, 0, 1), "95"); // BC6H_UF16
     unsupported(&dx10(4, 4, 98, 3, 0, 1), "98"); // BC7_UNORM
-    unsupported(&compressed(4, 4, b"ATI2"), "ATI2");
-    unsupported(&compressed(4, 4, b"DXT2"), "premultiplied");
+    unsupported(&dx10(4, 4, 27, 3, 0, 1), "27"); // R8G8B8A8_SNORM
 }
 
 #[test]
@@ -417,4 +418,192 @@ fn rejects_bogus_sizes_and_pixel_formats() {
     let mut no_format = header(1, 1, 0, &[0; 4], 32, [0xff, 0xff00, 0xff_0000, 0]);
     no_format.extend([0; 4]);
     assert!(matches!(decode_as(Format::Dds, &no_format), Err(CodecError::Unsupported { .. })));
+}
+
+fn alpha_block(a0: u8, a1: u8, bits: u64) -> Vec<u8> {
+    let mut b = vec![a0, a1];
+    b.extend(&bits.to_le_bytes()[..6]);
+    b
+}
+
+// Texel indices 0, 1 on the top row and 2, 7 below, for the 2x2 corner pixels.
+const ALPHA_INDICES: u64 = 1 << 3 | 2 << 12 | 7 << 15;
+
+#[test]
+fn decodes_bc4_as_grayscale() {
+    // a0 > a1: eight values, six at sevenths: palette 255, 0, 219, …, 36.
+    for (fourcc, name) in [(b"ATI1", "ATI1"), (b"BC4U", "BC4U")] {
+        let mut b = compressed(2, 2, fourcc);
+        b.extend(alpha_block(255, 0, ALPHA_INDICES));
+        let im = decode(&b).unwrap();
+        assert_eq!((im.layout(), im.sample_type()), (ChannelLayout::Gray, SampleType::U8), "{name}");
+        assert_eq!(im.data(), &[255, 0, 219, 36], "{name}");
+    }
+    // DXGI BC4_UNORM through the DX10 header.
+    let mut b = dx10(2, 2, 80, 3, 0, 1);
+    b.extend(alpha_block(255, 0, ALPHA_INDICES));
+    assert_eq!(decode(&b).unwrap().data(), &[255, 0, 219, 36]);
+}
+
+#[test]
+fn decodes_bc4_snorm_biased_to_unsigned() {
+    // Signed endpoints 127, -128: the eight-value mode interpolates between them and the
+    // output is biased by 128. Indices 0 and 1 give the endpoints exactly: 255 and 0.
+    let mut b = compressed(2, 2, b"BC4S");
+    b.extend(alpha_block(127, 128, ALPHA_INDICES));
+    assert_eq!(decode(&b).unwrap().data(), &[255, 0, 219, 36]);
+    // DXGI BC4_SNORM.
+    let mut b = dx10(2, 2, 81, 3, 0, 1);
+    b.extend(alpha_block(127, 128, ALPHA_INDICES));
+    assert_eq!(decode(&b).unwrap().data(), &[255, 0, 219, 36]);
+}
+
+#[test]
+fn decodes_bc5_as_two_channels_with_black_blue() {
+    // Red: 255, 0 endpoints (eight values). Green: 0, 255 (six values, plus 0 and 255).
+    for (fourcc, name) in [(b"ATI2", "ATI2"), (b"BC5U", "BC5U")] {
+        let mut b = compressed(2, 2, fourcc);
+        b.extend(alpha_block(255, 0, ALPHA_INDICES));
+        b.extend(alpha_block(0, 255, ALPHA_INDICES));
+        let im = decode(&b).unwrap();
+        assert_eq!(im.layout(), ChannelLayout::Rgb, "{name}");
+        assert_eq!(im.data(), &[255, 0, 0, 0, 255, 0, 219, 51, 0, 36, 255, 0], "{name}");
+    }
+    // DXGI BC5_UNORM, and BC5_SNORM with signed endpoints.
+    let mut b = dx10(2, 2, 83, 3, 0, 1);
+    b.extend(alpha_block(255, 0, ALPHA_INDICES));
+    b.extend(alpha_block(0, 255, ALPHA_INDICES));
+    assert_eq!(decode(&b).unwrap().data(), &[255, 0, 0, 0, 255, 0, 219, 51, 0, 36, 255, 0]);
+    let mut b = dx10(2, 2, 84, 3, 0, 1);
+    b.extend(alpha_block(127, 128, ALPHA_INDICES));
+    b.extend(alpha_block(128, 127, ALPHA_INDICES));
+    assert_eq!(decode(&b).unwrap().data(), &[255, 0, 0, 0, 255, 0, 219, 51, 0, 36, 255, 0]);
+}
+
+#[test]
+fn decodes_premultiplied_dxt2_and_dxt4_as_straight_alpha() {
+    // A solid rgb565 red of 123 (0x7800) stored premultiplied: colour * 255 / alpha.
+    let mut b = compressed(2, 2, b"DXT2");
+    b.extend([0x88; 8]); // 4-bit alpha of 8: 136 everywhere
+    b.extend(bc1_block(0x7800, 0x7800, [0; 4]));
+    assert_eq!(decode(&b).unwrap().data(), &[230, 0, 0, 136, 230, 0, 0, 136, 230, 0, 0, 136, 230, 0, 0, 136]);
+
+    let mut b = compressed(2, 2, b"DXT4");
+    b.extend(alpha_block(128, 128, 0)); // interpolated alpha of 128 everywhere
+    b.extend(bc1_block(0x7800, 0x7800, [0; 4]));
+    assert_eq!(decode(&b).unwrap().data(), &[245, 0, 0, 128, 245, 0, 0, 128, 245, 0, 0, 128, 245, 0, 0, 128]);
+}
+
+#[test]
+fn decodes_rxgb_as_plain_bc3() {
+    // RXGB is GIMP's name for an unswizzled DXT5 file: same bytes, same decode.
+    let mut b = compressed(2, 2, b"RXGB");
+    b.extend([255, 0, 0x08, 0xa0, 0x03, 0, 0, 0]);
+    b.extend(bc1_block(BLACK, WHITE, [0x04, 0x0b, 0, 0]));
+    assert_eq!(decode(&b).unwrap().data(), &[0, 0, 0, 255, 255, 255, 255, 0, 170, 170, 170, 219, 85, 85, 85, 36]);
+}
+
+/// A `DXT5` file as GIMP's DDS plug-in marks it: the real compression name sits in the
+/// reserved header fields after its `GIMP-DDS` marker.
+fn gimp_variant(variant: &[u8; 4], w: u32, h: u32) -> Vec<u8> {
+    let mut b = compressed(w, h, b"DXT5");
+    b[32..40].copy_from_slice(b"GIMP-DDS");
+    b[44..48].copy_from_slice(variant);
+    b
+}
+
+#[test]
+fn decodes_gimps_aexp_ycg1_and_ycg2_variants() {
+    // AEXP: colour scaled by the interpolated channel, opaque out. Red of 206 (0xc800)
+    // times 128/256 is 103.
+    let mut b = gimp_variant(b"AEXP", 2, 2);
+    b.extend(alpha_block(128, 128, 0));
+    b.extend(bc1_block(0xc800, 0xc800, [0; 4]));
+    let im = decode(&b).unwrap();
+    assert_eq!(im.layout(), ChannelLayout::Rgb);
+    assert_eq!(im.data(), &[103, 0, 0, 103, 0, 0, 103, 0, 0, 103, 0, 0]);
+
+    // YCG1: near-neutral chroma and full luma give near-white, and the blue channel is
+    // the alpha. 0x843f is r 132, g 134, b 255: co ≈ 0.016, cg ≈ 0.024, so the decode is
+    // r ≈ 253, g = 255, b ≈ 245, alpha 255.
+    let mut b = gimp_variant(b"YCG1", 2, 2);
+    b.extend(alpha_block(255, 255, 0)); // luma 1.0
+    b.extend(bc1_block(0x843f, 0x843f, [0; 4]));
+    let im = decode(&b).unwrap();
+    assert_eq!(im.layout(), ChannelLayout::Rgba);
+    for px in im.data().chunks(4) {
+        assert!(px[0].abs_diff(253) <= 3 && px[1].abs_diff(255) <= 3 && px[2].abs_diff(245) <= 3 && px[3] == 255, "{px:?}");
+    }
+
+    // YCG2: the chroma is divided by the blue channel's scale — full blue flattens it,
+    // so the same block decodes to plain opaque white.
+    let mut b = gimp_variant(b"YCG2", 2, 2);
+    b.extend(alpha_block(255, 255, 0));
+    b.extend(bc1_block(0x843f, 0x843f, [0; 4]));
+    let im = decode(&b).unwrap();
+    assert_eq!(im.layout(), ChannelLayout::Rgb);
+    for px in im.data().chunks(3) {
+        assert!(px[0].abs_diff(255) <= 2 && px[1].abs_diff(255) <= 2 && px[2].abs_diff(255) <= 2, "{px:?}");
+    }
+}
+
+#[test]
+fn decodes_float_pixel_formats_keeping_their_depth() {
+    // Legacy D3DFMT numbers in the FourCC field: 113 is A16B16G16R16F, 116 A32B32G32R32F.
+    let mut b = compressed(1, 1, &113u32.to_le_bytes());
+    for v in [0x3c00u16, 0x3800, 0x3400, 0x3c00] {
+        b.extend(v.to_le_bytes());
+    }
+    let im = decode(&b).unwrap();
+    assert_eq!((im.layout(), im.sample_type()), (ChannelLayout::Rgba, SampleType::F16));
+    assert_eq!(im.to_f16_samples().unwrap(), [1.0, 0.5, 0.25, 1.0].map(photocraft_codecs::f16::from_f32));
+
+    let mut b = compressed(1, 1, &116u32.to_le_bytes());
+    for v in [1.0f32, 0.5, 0.25, 1.0] {
+        b.extend(v.to_le_bytes());
+    }
+    let im = decode(&b).unwrap();
+    assert_eq!(im.sample_type(), SampleType::F32);
+    assert_eq!(im.to_f32_samples().unwrap(), [1.0, 0.5, 0.25, 1.0]);
+
+    // The same through DXGI 10 and 2.
+    let mut b = dx10(1, 1, 10, 3, 0, 1);
+    for v in [0x3c00u16, 0x3800, 0x3400, 0x3c00] {
+        b.extend(v.to_le_bytes());
+    }
+    assert_eq!(decode(&b).unwrap().to_f16_samples().unwrap(), [1.0, 0.5, 0.25, 1.0].map(photocraft_codecs::f16::from_f32));
+    let mut b = dx10(1, 1, 2, 3, 0, 1);
+    for v in [1.0f32, 0.5, 0.25, 1.0] {
+        b.extend(v.to_le_bytes());
+    }
+    assert_eq!(decode(&b).unwrap().to_f32_samples().unwrap(), [1.0, 0.5, 0.25, 1.0]);
+}
+
+#[test]
+fn decodes_an_alpha_only_a8_file() {
+    // DDPF_ALPHA: the mask sits in the R slot per Microsoft's docs, the A slot per others.
+    for (r_mask, a_mask) in [(0xff, 0), (0, 0xff)] {
+        let mut b = header(2, 1, DDPF_ALPHA, &[0; 4], 8, [r_mask, 0, 0, a_mask]);
+        b.extend([10, 40]);
+        let im = decode(&b).unwrap();
+        assert_eq!((im.layout(), im.data()), (ChannelLayout::Rgba, &[0, 0, 0, 10, 0, 0, 0, 40][..]), "mask {r_mask:#x}/{a_mask:#x}");
+        assert_eq!(photocraft_codecs::dds_info(&b).unwrap().compression, Some(DdsCompression::A8));
+    }
+}
+
+#[test]
+fn decodes_dx10_uncompressed_variants() {
+    // R8G8_UNORM.
+    let mut b = dx10(2, 1, 49, 3, 0, 1);
+    b.extend([10, 20, 30, 40]);
+    assert_eq!(decode(&b).unwrap().data(), &[10, 20, 0, 30, 40, 0]);
+    // R8_UNORM reads as grayscale.
+    let mut b = dx10(2, 1, 61, 3, 0, 1);
+    b.extend([10, 40]);
+    let im = decode(&b).unwrap();
+    assert_eq!((im.layout(), im.data()), (ChannelLayout::Gray, &[10u8, 40][..]));
+    // R10G10B10A2_UNORM: top two bits are alpha, three levels (0, 85, 170, 255).
+    let mut b = dx10(1, 1, 24, 3, 0, 1);
+    b.extend((0xc000_0000u32 | 0x3ff << 20 | 0x3ff << 10 | 0x3ff).to_le_bytes());
+    assert_eq!(decode(&b).unwrap().data(), &[255, 255, 255, 255]);
 }

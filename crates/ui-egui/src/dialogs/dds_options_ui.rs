@@ -60,8 +60,13 @@ pub(crate) fn compression_label(c: DdsCompression) -> &'static str {
     match c {
         DdsCompression::None => tl!("None"),
         DdsCompression::Bc1 => "BC1 / DXT1",
+        DdsCompression::Bc1a => "BC1a / DXT1a",
         DdsCompression::Bc2 => "BC2 / DXT3",
         DdsCompression::Bc3 => "BC3 / DXT5",
+        DdsCompression::Bc4 => "BC4 / ATI1",
+        DdsCompression::Bc5 => "BC5 / ATI2",
+        DdsCompression::Bc7 => "BC7",
+        DdsCompression::A8 => tl!("A8 / alpha only"),
     }
 }
 

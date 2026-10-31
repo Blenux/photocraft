@@ -54,6 +54,14 @@ pub(crate) fn alpha_palette(a0: u8, a1: u8) -> [u8; 8] {
     palette.map(|v| v as u8)
 }
 
+/// The signed variant used by BC4_SNORM and BC5_SNORM: biasing the `i8` endpoints by 128
+/// first lets the unsigned palette do the interpolation — the same decode other readers
+/// (FFmpeg, DirectXTex) produce for signed BC4/BC5, within a level where DirectXTex
+/// clamps an endpoint of -128 to -127.
+pub(crate) fn alpha_palette_signed(a0: i8, a1: i8) -> [u8; 8] {
+    alpha_palette((i32::from(a0) + 128) as u8, (i32::from(a1) + 128) as u8)
+}
+
 /// A BC1 block. Texels under half opacity become BC1's transparent black, which needs the
 /// three-colour mode; an opaque block takes whichever mode fits its colours better.
 pub(crate) fn encode_bc1(block: &Block, inside: Mask) -> [u8; 8] {

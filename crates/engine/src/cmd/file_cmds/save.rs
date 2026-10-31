@@ -156,6 +156,7 @@ pub fn dds_param(p: &Value, cmd: &str) -> Result<Option<photocraft_io::DdsOption
         Some(v) => Some(
             v.as_str()
                 .and_then(photocraft_io::DdsCompression::from_name)
+                .filter(|c| c.can_encode())
                 .ok_or_else(|| bad(format!("`ddsCompression` must be \"none\", \"bc1\", \"bc2\" or \"bc3\", got {v}")))?,
         ),
     };

@@ -315,7 +315,11 @@ fn dpx_bits(s: &str) -> Result<DpxBits, ValueError> {
 }
 
 fn dds_compression(s: &str) -> Result<DdsCompression, ValueError> {
-    DdsCompression::from_name(s).ok_or(ValueError::DdsCompression)
+    match DdsCompression::from_name(s) {
+        // Readable-only formats (bc4, a8, …) stay usage errors until the encoder grows them.
+        Some(c) if c.can_encode() => Ok(c),
+        _ => Err(ValueError::DdsCompression),
+    }
 }
 
 fn tiff_compression(s: &str) -> Result<TiffCompression, ValueError> {

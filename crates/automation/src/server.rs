@@ -1095,8 +1095,8 @@ impl PhotocraftMcp {
         }
         let dds_compression = match p.dds_compression.as_deref().map(|c| (c, photocraft_io::DdsCompression::from_name(c))) {
             None => None,
-            Some((_, Some(c))) => Some(c),
-            Some((c, None)) => return Ok(fail(format!("`ddsCompression` must be none, bc1, bc2 or bc3, got {c:?}"))),
+            Some((_, Some(c))) if c.can_encode() => Some(c),
+            Some((c, _)) => return Ok(fail(format!("`ddsCompression` must be none, bc1, bc2 or bc3, got {c:?}"))),
         };
         if let Some(b) = self.bridge_client() {
             // The bridge forwards to the running app's `app.save`, which takes only an optional

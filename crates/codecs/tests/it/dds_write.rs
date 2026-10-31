@@ -311,7 +311,7 @@ fn block_compressed_mip_chains_have_a_block_per_small_level() {
 #[test]
 fn strips_and_tiny_textures_encode_with_every_option() {
     for (w, h) in [(1, 1), (1, 9), (9, 1), (2, 3), (3, 2)] {
-        for compression in DdsCompression::ALL {
+        for compression in DdsCompression::ALL.into_iter().filter(|c| c.can_encode()) {
             for mipmaps in [false, true] {
                 let img = ramp(w, h, ChannelLayout::Rgba);
                 let b = encode(&img, Format::Dds, &opts(compression, mipmaps)).unwrap_or_else(|e| panic!("{w}x{h} {compression:?} {mipmaps}: {e}"));
@@ -340,7 +340,7 @@ fn compression_names_round_trip() {
     }
     assert_eq!(DdsCompression::from_name("DXT5"), Some(DdsCompression::Bc3));
     assert_eq!(DdsCompression::from_name("dxt1"), Some(DdsCompression::Bc1));
-    for bad in ["", "bc7", "dxt2", "uncompressed "] {
+    for bad in ["", "bc6h", "dxt2", "uncompressed "] {
         assert_eq!(DdsCompression::from_name(bad), None, "{bad:?}");
     }
 }
@@ -365,7 +365,7 @@ fn dds_encode_timings_on_30_mp() {
         }
     }
     let img = Image::from_u8(w, h, ChannelLayout::Rgba, data).unwrap();
-    for compression in DdsCompression::ALL {
+    for compression in DdsCompression::ALL.into_iter().filter(|c| c.can_encode()) {
         for mipmaps in [false, true] {
             let t = std::time::Instant::now();
             let b = encode(&img, Format::Dds, &opts(compression, mipmaps)).unwrap();

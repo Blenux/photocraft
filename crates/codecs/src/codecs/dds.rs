@@ -2,15 +2,19 @@
 //! "DDS_HEADER", "DDS_PIXELFORMAT", "DDS_HEADER_DXT10").
 //!
 //! Reading: a 2D texture, its top mip level or the whole chain, either uncompressed (8 to 32
-//! bits per pixel described by channel masks, RGB or luminance) or block-compressed BC1/BC2/BC3
-//! (DXT1/DXT3/DXT5), with or without the DX10 header. Cubemaps, texture arrays and volume
-//! textures are refused rather than flattened to one face or slice.
+//! bits per pixel described by channel masks, RGB or luminance, an alpha-only A8, or 16/32-bit
+//! float RGBA) or block-compressed BC1–BC5 (DXT1/DXT3/DXT5, ATI1/BC4, ATI2/BC5, signed SNORM
+//! forms included), with or without the DX10 header. The premultiplied DXT2/DXT4 and GIMP's
+//! AEXP and YCoCg BC3 variants decode to straight RGB. Cubemaps, texture arrays, volume
+//! textures and BC7 are refused rather than decoded wrongly.
 //!
 //! Writing: a 2D texture, uncompressed (BGRA or BGRX, luminance with or without alpha) or
 //! BC1/BC2/BC3, optionally with its full mip chain. The legacy header describes all of these,
 //! so no DX10 header is written; formats only DXGI can name (BC4–BC7, sRGB) aren't written.
 
 use std::borrow::Cow;
+
+use half::f16;
 
 use super::dds_bc::{self, Block, Mask};
 use crate::SampleType;
@@ -27,6 +31,7 @@ const DX10_HEADER: usize = 20;
 
 const DDSD_DEPTH: u32 = 0x80_0000;
 const DDPF_ALPHAPIXELS: u32 = 0x1;
+const DDPF_ALPHA: u32 = 0x2;
 const DDPF_FOURCC: u32 = 0x4;
 const DDPF_RGB: u32 = 0x40;
 const DDPF_LUMINANCE: u32 = 0x2_0000;
@@ -88,12 +93,51 @@ enum Encoding {
         gray: bool,
         fields: [Option<Field>; 4],
     },
+    /// RGBA, four half floats per pixel (D3DFMT_A16B16G16R16F, DXGI R16G16B16A16_FLOAT).
+    Float16,
+    /// RGBA, four floats per pixel (D3DFMT_A32B32G32R32F, DXGI R32G32B32A32_FLOAT).
+    Float32,
     Bc1,
     Bc2,
     Bc3,
+    /// One interpolated channel; `signed` is the SNORM form (BC4S).
+    Bc4 {
+        signed: bool,
+    },
+    /// Two interpolated channels; `signed` is the SNORM form (BC5S). Decodes as RGB with
+    /// black blue, the normal-map convention.
+    Bc5 {
+        signed: bool,
+    },
+    /// BC2's blocks, but its RGB is premultiplied by alpha (DXT2).
+    Dxt2,
+    /// BC3's blocks, but its RGB is premultiplied by alpha (DXT4).
+    Dxt4,
+    /// A BC3 file GIMP's DDS plug-in writes for `AEXP`: RGB stores colour premultiplied by
+    /// the interpolated "alpha" channel, which is the exponent's scale; output is opaque.
+    Aexp,
+    /// GIMP's `YCG1`: BC3 carrying YCoCg in its A, R and G channels.
+    Ycg1,
+    /// GIMP's `YCG2`: `YCG1` with the chroma channels scaled by B.
+    Ycg2,
+    /// `DDPF_ALPHA`: a single alpha channel, no colour at all (A8).
+    Alpha {
+        bytes: usize,
+        field: Field,
+    },
 }
 
 impl Encoding {
+    /// An alpha-only pixel (`DDPF_ALPHA`): decodes as RGBA with black colour so the alpha
+    /// data is intact — File › Open can route it to a document channel.
+    fn alpha(bits: u32, mask: u32) -> Result<Encoding, CodecError> {
+        if !matches!(bits, 8 | 16 | 24 | 32) {
+            return Err(bad(format!("{bits} bits per pixel is not 8, 16, 24 or 32")));
+        }
+        let field = Field::new(mask, bits)?.ok_or_else(|| bad("the alpha pixel format has no channel mask"))?;
+        Ok(Encoding::Alpha { bytes: bits as usize / 8, field })
+    }
+
     fn masks(bits: u32, masks: [u32; 4], gray: bool) -> Result<Encoding, CodecError> {
         if !matches!(bits, 8 | 16 | 24 | 32) {
             return Err(bad(format!("{bits} bits per pixel is not 8, 16, 24 or 32")));
@@ -110,21 +154,38 @@ impl Encoding {
     }
 
     /// The compression a save could write this encoding back as; `None` when the file's
-    /// form isn't writable.
-    fn compression(&self) -> Option<DdsCompression> {
+    /// form isn't writable (premultiplied, GIMP's variants, float or signed). `alpha_pixels`
+    /// is the header's `DDPF_ALPHAPIXELS` promise — a DXT1 carrying it reads back `bc1a`.
+    fn compression(&self, alpha_pixels: bool) -> Option<DdsCompression> {
         Some(match self {
             Encoding::Masks { .. } => DdsCompression::None,
+            Encoding::Alpha { .. } => DdsCompression::A8,
+            Encoding::Bc1 if alpha_pixels => DdsCompression::Bc1a,
             Encoding::Bc1 => DdsCompression::Bc1,
             Encoding::Bc2 => DdsCompression::Bc2,
             Encoding::Bc3 => DdsCompression::Bc3,
+            Encoding::Bc4 { signed: false } => DdsCompression::Bc4,
+            Encoding::Bc5 { signed: false } => DdsCompression::Bc5,
+            _ => return None,
         })
     }
 
+    /// The image's sample type: float DDS encodings keep their depth; the rest is 8-bit.
+    fn sample(&self) -> SampleType {
+        match self {
+            Encoding::Float16 => SampleType::F16,
+            Encoding::Float32 => SampleType::F32,
+            _ => SampleType::U8,
+        }
+    }
+
     /// Whether the encoding carries an alpha channel the decode reads. BC1 counts: it can
-    /// hold 1-bit transparency.
+    /// hold 1-bit transparency. BC4/BC5's channels are data (normal maps), not alpha, and
+    /// AEXP and YCG2 decode opaque.
     fn has_alpha(&self) -> bool {
         match self {
             Encoding::Masks { fields, .. } => fields[3].is_some(),
+            Encoding::Bc4 { .. } | Encoding::Bc5 { .. } | Encoding::Aexp | Encoding::Ycg2 => false,
             _ => true,
         }
     }
@@ -134,8 +195,16 @@ impl Encoding {
             Encoding::Masks { gray: true, fields, .. } if fields[3].is_some() => ChannelLayout::GrayA,
             Encoding::Masks { gray: true, .. } => ChannelLayout::Gray,
             Encoding::Masks { fields, .. } if fields[3].is_none() => ChannelLayout::Rgb,
+            Encoding::Bc4 { .. } => ChannelLayout::Gray,
+            Encoding::Bc5 { .. } | Encoding::Aexp | Encoding::Ycg2 => ChannelLayout::Rgb,
+            Encoding::Ycg1 => ChannelLayout::Rgba,
             _ => ChannelLayout::Rgba,
         }
+    }
+
+    /// `DXGI_FORMAT_*_SRGB` names that mark the texture sRGB.
+    fn dxgi_is_srgb(dxgi: u32) -> bool {
+        matches!(dxgi, 29 | 72 | 75 | 78 | 91 | 93 | 99)
     }
 
     /// Stored row stride and byte size of the top mip level (block rows for BC).
@@ -143,7 +212,7 @@ impl Encoding {
         let overflow = || bad("pixel data size overflow");
         let (w, h) = (usize::try_from(width).map_err(|_| overflow())?, usize::try_from(height).map_err(|_| overflow())?);
         let (row_bytes, rows) = match self {
-            Encoding::Masks { bytes, .. } => {
+            Encoding::Masks { bytes, .. } | Encoding::Alpha { bytes, .. } => {
                 let packed = w.checked_mul(*bytes).ok_or_else(overflow)?;
                 let row_bytes = match pitch {
                     Some(pitch) => usize::try_from(pitch).map_err(|_| overflow())?,
@@ -154,8 +223,10 @@ impl Encoding {
                 }
                 (row_bytes, h)
             }
-            Encoding::Bc1 | Encoding::Bc2 | Encoding::Bc3 => {
-                let block = if matches!(self, Encoding::Bc1) { 8 } else { 16 };
+            Encoding::Float16 => (w.checked_mul(8).ok_or_else(overflow)?, h),
+            Encoding::Float32 => (w.checked_mul(16).ok_or_else(overflow)?, h),
+            _ => {
+                let block = if matches!(self, Encoding::Bc1 | Encoding::Bc4 { .. }) { 8 } else { 16 };
                 (w.div_ceil(4).checked_mul(block).ok_or_else(overflow)?, h.div_ceil(4))
             }
         };
@@ -169,12 +240,33 @@ fn legacy_encoding(b: &[u8]) -> Result<Encoding, CodecError> {
     let (flags, fourcc, bits) = (le32(b, 80)?, le32(b, 84)?, le32(b, 88)?);
     let alpha = if flags & DDPF_ALPHAPIXELS != 0 { le32(b, 104)? } else { 0 };
     if flags & DDPF_FOURCC != 0 {
+        // GIMP's DDS plug-in writes AEXP/YCG1/YCG2 files claiming "DXT5" and stashes the real
+        // name in reserved header fields after a "GIMP-DDS" marker (file offsets 32–39, the
+        // variant's FourCC at 44).
+        if &fourcc.to_le_bytes() == b"DXT5" && b.get(32..40) == Some(b"GIMP-DDS") {
+            match &le32(b, 44).unwrap_or(0).to_le_bytes() {
+                b"AEXP" => return Ok(Encoding::Aexp),
+                b"YCG1" => return Ok(Encoding::Ycg1),
+                b"YCG2" => return Ok(Encoding::Ycg2),
+                _ => {}
+            }
+        }
         return match &fourcc.to_le_bytes() {
             b"DXT1" => Ok(Encoding::Bc1),
             b"DXT3" => Ok(Encoding::Bc2),
-            b"DXT5" => Ok(Encoding::Bc3),
-            b"DXT2" | b"DXT4" => Err(unsupported("premultiplied-alpha DXT2/DXT4 textures are not supported")),
-            _ => Err(unsupported(format!("compression `{}` is not supported (DXT1, DXT3 and DXT5 are)", fourcc_name(fourcc)))),
+            b"DXT5" | b"RXGB" => Ok(Encoding::Bc3),
+            b"DXT2" => Ok(Encoding::Dxt2),
+            b"DXT4" => Ok(Encoding::Dxt4),
+            b"ATI1" | b"BC4U" => Ok(Encoding::Bc4 { signed: false }),
+            b"BC4S" => Ok(Encoding::Bc4 { signed: true }),
+            b"ATI2" | b"BC5U" | b"A2XY" => Ok(Encoding::Bc5 { signed: false }),
+            b"BC5S" => Ok(Encoding::Bc5 { signed: true }),
+            b"AEXP" => Ok(Encoding::Aexp),
+            b"YCG1" => Ok(Encoding::Ycg1),
+            b"YCG2" => Ok(Encoding::Ycg2),
+            _ if fourcc == 113 => Ok(Encoding::Float16),
+            _ if fourcc == 116 => Ok(Encoding::Float32),
+            _ => Err(unsupported(format!("compression `{}` is not supported", fourcc_name(fourcc)))),
         };
     }
     if flags & DDPF_RGB != 0 {
@@ -183,12 +275,24 @@ fn legacy_encoding(b: &[u8]) -> Result<Encoding, CodecError> {
     if flags & DDPF_LUMINANCE != 0 {
         return Encoding::masks(bits, [le32(b, 92)?, 0, 0, alpha], true);
     }
-    Err(unsupported(format!("pixel format flags {flags:#x} are not RGB, luminance or a supported compression")))
+    if flags & DDPF_ALPHA != 0 {
+        // Writers disagree on the slot: Microsoft's docs put the mask in R (offset 92),
+        // others in A (104).
+        let mask = match le32(b, 92)? {
+            0 => le32(b, 104)?,
+            mask => mask,
+        };
+        return Encoding::alpha(bits, mask);
+    }
+    Err(unsupported(format!("pixel format flags {flags:#x} are not RGB, luminance, alpha or a supported compression")))
 }
 
 /// The DX10 header's DXGI format, refusing anything but a single 2D texture.
 fn dx10_encoding(b: &[u8]) -> Result<Encoding, CodecError> {
     let (dxgi, dimension, misc, array) = (le32(b, HEADER)?, le32(b, HEADER + 4)?, le32(b, HEADER + 8)?, le32(b, HEADER + 12)?);
+    if misc & !MISC_TEXTURECUBE != 0 {
+        return Err(unsupported(format!("unsupported resource misc flags {misc:#x}")));
+    }
     if misc & MISC_TEXTURECUBE != 0 {
         return Err(unsupported("cubemaps are not supported"));
     }
@@ -201,19 +305,36 @@ fn dx10_encoding(b: &[u8]) -> Result<Encoding, CodecError> {
     const RGBA: [u32; 4] = [0xff, 0xff00, 0xff_0000, 0xff00_0000];
     const BGRA: [u32; 4] = [0xff_0000, 0xff00, 0xff, 0xff00_0000];
     const BGRX: [u32; 4] = [0xff_0000, 0xff00, 0xff, 0];
+    const R10A2: [u32; 4] = [0x3ff, 0xffc00, 0x3ff0_0000, 0xc000_0000];
+    const RG8: [u32; 4] = [0xff, 0xff00, 0, 0];
+    const B565: [u32; 4] = [0xf800, 0x7e0, 0x1f, 0];
+    const B5A1: [u32; 4] = [0x7c00, 0x3e0, 0x1f, 0x8000];
+    const B4A4: [u32; 4] = [0xf00, 0xf0, 0xf, 0xf000];
     match dxgi {
-        27..=29 => Encoding::masks(32, RGBA, false),
+        28 | 29 => Encoding::masks(32, RGBA, false),
         87 | 90 | 91 => Encoding::masks(32, BGRA, false),
         88 | 92 | 93 => Encoding::masks(32, BGRX, false),
+        24 => Encoding::masks(32, R10A2, false),
+        49 => Encoding::masks(16, RG8, false),
+        61 => Encoding::masks(8, [0xff, 0, 0, 0], true),
+        85 => Encoding::masks(16, B565, false),
+        86 => Encoding::masks(16, B5A1, false),
+        115 => Encoding::masks(16, B4A4, false),
+        10 => Ok(Encoding::Float16),
+        2 => Ok(Encoding::Float32),
         70..=72 => Ok(Encoding::Bc1),
         73..=75 => Ok(Encoding::Bc2),
         76..=78 => Ok(Encoding::Bc3),
-        _ => Err(unsupported(format!("DXGI format {dxgi} is not supported (BC1, BC2, BC3 and 8-bit RGBA or BGRA are)"))),
+        79..=81 => Ok(Encoding::Bc4 { signed: dxgi == 81 }),
+        82..=84 => Ok(Encoding::Bc5 { signed: dxgi == 84 }),
+        _ => Err(unsupported(format!("DXGI format {dxgi} is not supported"))),
     }
 }
 
 /// The parsed header: the encoding, where its pixel data starts, the top level's dimensions,
-/// the declared mip count and the stored row pitch (which is the top level's only).
+/// the declared mip count, the stored row pitch (which is the top level's only), whether the
+/// pixel format promises alpha pixels (a DXT1 reads back `bc1a`) and the DX10 header's sRGB
+/// mark.
 struct Parsed<'a> {
     encoding: Encoding,
     data: &'a [u8],
@@ -221,6 +342,8 @@ struct Parsed<'a> {
     height: u32,
     levels: u32,
     pitch: Option<u32>,
+    alpha_pixels: bool,
+    srgb: bool,
 }
 
 impl Parsed<'_> {
@@ -250,7 +373,9 @@ fn parse(b: &[u8]) -> Result<Parsed<'_>, CodecError> {
     let levels = if flags & DDSD_MIPMAPCOUNT != 0 { le32(b, 28)?.max(1) } else { 1 };
     // The same header field is a total level size for BC, but a row stride when DDSD_PITCH is set.
     let pitch = if flags & DDSD_PITCH != 0 { Some(le32(b, 20)?) } else { None };
-    Ok(Parsed { encoding, data: b.get(start..).unwrap_or_default(), width, height, levels, pitch })
+    let alpha_pixels = le32(b, 80)? & DDPF_ALPHAPIXELS != 0;
+    let srgb = dx10 && Encoding::dxgi_is_srgb(le32(b, HEADER)?);
+    Ok(Parsed { encoding, data: b.get(start..).unwrap_or_default(), width, height, levels, pitch, alpha_pixels, srgb })
 }
 
 pub(crate) fn decode(b: &[u8], limits: &Limits) -> Result<Image, CodecError> {
@@ -279,7 +404,7 @@ fn level_image(p: &Parsed, index: u32, limits: &Limits) -> Result<Image, CodecEr
     }
     let pitch = if index == 0 { p.pitch } else { None };
     let (row_pitch, size) = p.encoding.level_layout(w, h, pitch)?;
-    limits.check(w, h, p.encoding.layout(), SampleType::U8)?;
+    limits.check(w, h, p.encoding.layout(), p.encoding.sample())?;
     let data = p.data.get(at..).and_then(|d| d.get(..size)).ok_or_else(|| bad(format!("truncated pixel data: {size} bytes needed")))?;
     decode_image(p.encoding, data, w, h, row_pitch)
 }
@@ -288,12 +413,30 @@ fn level_image(p: &Parsed, index: u32, limits: &Limits) -> Result<Image, CodecEr
 /// encoding a save could write back, for the options dialog's match-source defaults.
 pub(crate) fn info(b: &[u8]) -> Result<crate::options::DdsInfo, CodecError> {
     let p = parse(b)?;
-    Ok(crate::options::DdsInfo { width: p.width, height: p.height, levels: p.levels, alpha: p.encoding.has_alpha(), compression: p.encoding.compression() })
+    Ok(crate::options::DdsInfo {
+        width: p.width,
+        height: p.height,
+        levels: p.levels,
+        alpha: p.encoding.has_alpha(),
+        compression: p.encoding.compression(p.alpha_pixels),
+        srgb: p.srgb,
+    })
 }
 
 fn decode_image(encoding: Encoding, data: &[u8], width: u32, height: u32, row_pitch: usize) -> Result<Image, CodecError> {
     let layout = encoding.layout();
     let (w, h) = (width as usize, height as usize);
+    match encoding {
+        Encoding::Float16 => {
+            let pixels: Vec<f16> = data.as_chunks::<2>().0.iter().map(|c| f16::from_bits(u16::from_le_bytes(*c))).collect();
+            return Image::from_f16(width, height, layout, &pixels);
+        }
+        Encoding::Float32 => {
+            let pixels: Vec<f32> = data.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
+            return Image::from_f32(width, height, layout, &pixels);
+        }
+        _ => {}
+    }
     let channels = layout.channels();
     let row_size = w.checked_mul(channels).ok_or_else(|| bad("pixel size overflow"))?;
     let total = row_size.checked_mul(h).ok_or_else(|| bad("pixel size overflow"))?;
@@ -310,22 +453,60 @@ fn decode_image(encoding: Encoding, data: &[u8], width: u32, height: u32, row_pi
                 }
             }
         }
-        Encoding::Bc1 | Encoding::Bc2 | Encoding::Bc3 => {
-            let block_size = if matches!(encoding, Encoding::Bc1) { 8 } else { 16 };
+        Encoding::Alpha { bytes, field } => {
+            for (src_row, dst_row) in data.chunks_exact(row_pitch).zip(pixels.chunks_exact_mut(row_size)) {
+                for (src, dst) in src_row.chunks_exact(bytes).zip(dst_row.chunks_exact_mut(channels)) {
+                    let pixel = src.iter().rev().fold(0u32, |v, &byte| v << 8 | u32::from(byte));
+                    dst.copy_from_slice(&[0, 0, 0, field.get(pixel)][..channels]);
+                }
+            }
+        }
+        _ => {
+            let block_size = if matches!(encoding, Encoding::Bc1 | Encoding::Bc4 { .. }) { 8 } else { 16 };
             let blocks_x = w.div_ceil(4);
             for (i, block) in data.chunks_exact(block_size).enumerate() {
-                let texels = match encoding {
+                let mut texels = match encoding {
                     Encoding::Bc1 => bc1(block, true),
-                    Encoding::Bc2 => with_alpha(bc1(block.get(8..).unwrap_or_default(), false), bc2_alpha(block)),
-                    _ => with_alpha(bc1(block.get(8..).unwrap_or_default(), false), bc3_alpha(block)),
+                    Encoding::Bc2 | Encoding::Dxt2 => with_alpha(bc1(block.get(8..).unwrap_or_default(), false), bc2_alpha(block)),
+                    Encoding::Bc3 | Encoding::Dxt4 | Encoding::Aexp | Encoding::Ycg1 | Encoding::Ycg2 => {
+                        with_alpha(bc1(block.get(8..).unwrap_or_default(), false), bc3_alpha(block))
+                    }
+                    Encoding::Bc4 { signed } => std::array::from_fn(|t| {
+                        let g = bc4_texel(block, t, signed);
+                        [g, g, g, 255]
+                    }),
+                    Encoding::Bc5 { signed } => {
+                        std::array::from_fn(|t| [bc4_texel(block, t, signed), bc4_texel(block.get(8..).unwrap_or_default(), t, signed), 0, 255])
+                    }
+                    _ => continue,
                 };
+                // The premultiplied and GIMP channel orders become straight RGBA per texel.
+                for p in texels.iter_mut() {
+                    match encoding {
+                        Encoding::Dxt2 | Encoding::Dxt4 => {
+                            let a = u32::from(p[3]);
+                            for c in p.iter_mut().take(3) {
+                                *c = (u32::from(*c) * 255).checked_div(a).map_or(0, |v| v.min(255) as u8);
+                            }
+                        }
+                        Encoding::Aexp => {
+                            let a = u32::from(p[3]);
+                            for c in p.iter_mut().take(3) {
+                                *c = ((u32::from(*c) * a + 1) >> 8) as u8;
+                            }
+                            p[3] = 255;
+                        }
+                        Encoding::Ycg1 | Encoding::Ycg2 => *p = ycocg(p, matches!(encoding, Encoding::Ycg2)),
+                        _ => {}
+                    }
+                }
                 let (bx, by) = ((i % blocks_x) * 4, (i / blocks_x) * 4);
                 for (t, texel) in texels.iter().enumerate() {
                     let (x, y) = (bx + t % 4, by + t / 4);
                     if x < w && y < h {
-                        let at = (y * w + x) * 4;
-                        if let Some(dst) = pixels.get_mut(at..at + 4) {
-                            dst.copy_from_slice(texel);
+                        let at = (y * w + x) * channels;
+                        if let Some(dst) = pixels.get_mut(at..at + channels) {
+                            dst.copy_from_slice(&texel[..channels]);
                         }
                     }
                 }
@@ -333,6 +514,36 @@ fn decode_image(encoding: Encoding, data: &[u8], width: u32, height: u32, row_pi
         }
     }
     Image::from_u8(width, height, layout, pixels)
+}
+
+/// One texel of a BC4 block, or of either half of a BC5 one: the same interpolated block BC3
+/// uses for alpha, signed (SNORM) when `signed`.
+fn bc4_texel(block: &[u8], t: usize, signed: bool) -> u8 {
+    let byte = |i: usize| block.get(i).copied().unwrap_or(0);
+    let palette = if signed { dds_bc::alpha_palette_signed(byte(0) as i8, byte(1) as i8) } else { dds_bc::alpha_palette(byte(0), byte(1)) };
+    let bits = u64::from_le_bytes([byte(2), byte(3), byte(4), byte(5), byte(6), byte(7), 0, 0]);
+    palette[((bits >> (3 * t)) & 7) as usize]
+}
+
+/// One YCoCg texel of GIMP's DDS variants as RGBA: luma sits in the stored alpha channel,
+/// orange and green chroma in red and green; `scaled` (YCG2) divides the chroma by a scale
+/// in blue, otherwise blue is the output alpha.
+fn ycocg(p: &[u8; 4], scaled: bool) -> [u8; 4] {
+    const OFFSET: f32 = 0.5 * 256.0 / 255.0;
+    let y = f32::from(p[3]) / 255.0;
+    let (mut co, mut cg) = (f32::from(p[0]) / 255.0 - OFFSET, f32::from(p[1]) / 255.0 - OFFSET);
+    let mut alpha = 255;
+    if scaled {
+        let s = 1.0 / ((255.0 / 8.0) * (f32::from(p[2]) / 255.0) + 1.0);
+        co *= s;
+        cg *= s;
+    } else {
+        alpha = p[2];
+    }
+    let r = (y + co - cg).clamp(0.0, 1.0);
+    let g = (y + cg).clamp(0.0, 1.0);
+    let b = (y - co - cg).clamp(0.0, 1.0);
+    [(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, alpha]
 }
 
 /// A BC1 colour block. BC2 and BC3 colour blocks always have four colours; only BC1's

@@ -229,36 +229,74 @@ pub enum DdsCompression {
     Bc2,
     /// BC3 (DXT5): 8 bits per pixel, with smooth interpolated alpha.
     Bc3,
+    /// BC4 (ATI1): 4 bits per pixel, a single interpolated channel; stores the gray channel.
+    Bc4,
+    /// BC5 (ATI2): 8 bits per pixel, two interpolated channels; stores gray and alpha.
+    Bc5,
+    /// BC7: 8 bits per pixel, partitioned endpoints; the best quality RGBA block format.
+    Bc7,
+    /// BC1 block data under the DXT1 name, but the header declares `DDPF_ALPHAPIXELS`: the
+    /// file promises 1-bit punch-through alpha (DXT1a). Plain `bc1` writes no such promise.
+    Bc1a,
+    /// Uncompressed 8-bit alpha only (`DDPF_ALPHA`): the file is a single-channel mask.
+    A8,
 }
 
 impl DdsCompression {
-    pub const ALL: [DdsCompression; 4] = [DdsCompression::None, DdsCompression::Bc1, DdsCompression::Bc2, DdsCompression::Bc3];
+    pub const ALL: [DdsCompression; 9] = [
+        DdsCompression::None,
+        DdsCompression::Bc1,
+        DdsCompression::Bc1a,
+        DdsCompression::Bc2,
+        DdsCompression::Bc3,
+        DdsCompression::Bc4,
+        DdsCompression::Bc5,
+        DdsCompression::Bc7,
+        DdsCompression::A8,
+    ];
 
-    /// The name scripts and the CLI use: `none`, `bc1`, `bc2` or `bc3`.
+    /// The name scripts and the CLI use: `none`, `bc1`, `bc1a`, `bc2`, `bc3`, `bc4`, `bc5`,
+    /// `bc7` or `a8`.
     pub fn name(self) -> &'static str {
         match self {
             DdsCompression::None => "none",
             DdsCompression::Bc1 => "bc1",
+            DdsCompression::Bc1a => "bc1a",
             DdsCompression::Bc2 => "bc2",
             DdsCompression::Bc3 => "bc3",
+            DdsCompression::Bc4 => "bc4",
+            DdsCompression::Bc5 => "bc5",
+            DdsCompression::Bc7 => "bc7",
+            DdsCompression::A8 => "a8",
         }
     }
 
-    /// [`Self::name`] back to a compression, also taking the DXT names (`dxt1`, `dxt3`,
-    /// `dxt5`), in any case. Anything else is `None`.
+    /// Whether the encoder can write it — the readable-only formats (`bc1a`, `bc4`, `bc5`,
+    /// `bc7`, `a8`) parse so a file's own format can be named, but are refused on save.
+    pub fn can_encode(self) -> bool {
+        matches!(self, DdsCompression::None | DdsCompression::Bc1 | DdsCompression::Bc2 | DdsCompression::Bc3)
+    }
+
+    /// [`Self::name`] back to a compression, also taking the DXT and ATI names (`dxt1`,
+    /// `dxt3`, `dxt5`, `ati1`, `ati2`), in any case. Anything else is `None`.
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "none" => Some(DdsCompression::None),
             "bc1" | "dxt1" => Some(DdsCompression::Bc1),
+            "bc1a" | "dxt1a" => Some(DdsCompression::Bc1a),
             "bc2" | "dxt3" => Some(DdsCompression::Bc2),
             "bc3" | "dxt5" => Some(DdsCompression::Bc3),
+            "bc4" | "ati1" | "bc4u" => Some(DdsCompression::Bc4),
+            "bc5" | "ati2" | "bc5u" => Some(DdsCompression::Bc5),
+            "bc7" => Some(DdsCompression::Bc7),
+            "a8" => Some(DdsCompression::A8),
             _ => None,
         }
     }
 
     /// A block compression (lossy), not uncompressed pixels.
     pub fn is_block(self) -> bool {
-        self != DdsCompression::None
+        !matches!(self, DdsCompression::None | DdsCompression::A8)
     }
 }
 
@@ -298,6 +336,9 @@ pub struct DdsInfo {
     /// The compression a save could write back; `None` when the encoding has no writable
     /// form.
     pub compression: Option<DdsCompression>,
+    /// The DX10 header marks the texture sRGB (`DXGI_FORMAT_*_SRGB`); legacy files carry no
+    /// such mark and read `false` whatever their colours mean.
+    pub srgb: bool,
 }
 
 /// Options for [`crate::encode`].
