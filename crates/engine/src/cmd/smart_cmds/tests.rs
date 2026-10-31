@@ -244,6 +244,32 @@ fn converting_a_smart_object_wraps_it_in_another_smart_object() {
 }
 
 #[test]
+fn converting_a_smart_object_with_open_contents_editor_is_refused() {
+    let mut s = session(8);
+    paint(&mut s);
+    convert(&mut s);
+    let smart_id = s.active().unwrap().active_layer.unwrap();
+    let child = s.execute("layer.smartObjects.editContents", json!({})).unwrap()["document"].as_u64().unwrap() as usize;
+
+    // Back in the parent, wrapping would move the layer into the new object's contents and strand
+    // the open editor's commit path, so the command refuses rather than losing its edits.
+    s.set_active(0);
+    let err = s.execute("layer.smartObjects.convertToSmartObject", json!({})).unwrap_err().to_string();
+    assert!(err.contains("Edit Contents"), "{err}");
+    assert!(matches!(s.active().unwrap().doc.layer(smart_id).unwrap().content, LayerContent::Smart(_)), "the refused convert keeps the layer");
+    assert_eq!(s.smart_links.len(), 1, "the editor link is still live");
+
+    s.set_active(child);
+    s.execute("file.close", json!({})).unwrap();
+    s.set_active(0);
+    convert(&mut s);
+    let sm = active_smart(&s);
+    let SmartSource::Embedded { file_name, bytes } = &sm.source else { panic!("not embedded") };
+    let inner = decode_source(file_name, bytes).unwrap();
+    assert!(inner.layers.iter().any(|l| matches!(l.content, LayerContent::Smart(_))), "closing the editor lets the wrap proceed");
+}
+
+#[test]
 fn convert_to_smart_object_stays_enabled_for_a_selection_that_includes_a_smart_object() {
     let mut s = session(8);
     paint(&mut s);
