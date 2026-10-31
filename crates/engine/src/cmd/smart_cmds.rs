@@ -28,9 +28,7 @@ use std::sync::{Arc, Mutex};
 use photocraft_algo::resample::translate_surface;
 use photocraft_algo::transform::Homography;
 use photocraft_color::{BlendMode, ColorMode, PixelFormat, SampleType};
-use photocraft_doc::{
-    BlendIf, BlendRange, DocId, Document, Layer, LayerContent, LayerId, LayerMask, Metadata, SmartContentsId, SmartFilter, SmartObject, SmartSource,
-};
+use photocraft_doc::{DocId, Document, Layer, LayerContent, LayerId, LayerMask, Metadata, SmartContentsId, SmartFilter, SmartObject, SmartSource};
 use photocraft_geom::{Affine, Rect, Size};
 use photocraft_raster::Surface;
 use serde_json::{Value, json};
