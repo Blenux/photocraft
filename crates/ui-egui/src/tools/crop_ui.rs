@@ -51,6 +51,9 @@ pub struct CropState {
     pub default_frame: bool,
     /// The document (index and size) the default frame was made for.
     frame_for: Option<(usize, u32, u32)>,
+    /// Esc dismissed the frame (Photoshop keeps the border hidden until the next draw, #10370):
+    /// the document (index, size, revision) it was cancelled on.
+    cancelled: Option<(usize, u32, u32, u64)>,
     /// The frame is being edited (pressed since it was made): the canvas shows what lies past it.
     pub editing: bool,
     /// The document the pending frame (or gesture) belongs to ([`cancel_stale`], #1918).
@@ -347,9 +350,16 @@ pub fn ensure_frame(app: &mut PhotocraftApp) {
     crate::crop_mode::sync(app, None);
 }
 
+/// The document a crop state is bound to: index, size and revision, so an edit or another
+/// document re-arms it.
+fn frame_key(app: &PhotocraftApp) -> Option<(usize, u32, u32, u64)> {
+    app.session.active_index().zip(app.session.active()).map(|(i, st)| (i, st.doc.size.width, st.doc.size.height, st.revision))
+}
+
 fn frame(app: &mut PhotocraftApp) {
     if app.ui.tool != Tool::Crop {
         app.crop.editing = false;
+        app.crop.cancelled = None;
         crate::crop_straighten::reset(app);
         // Leaving the tool drops an untouched default frame and, as in Photoshop, commits a
         // drawn one (#3368).
@@ -369,10 +379,19 @@ fn frame(app: &mut PhotocraftApp) {
     if app.ui.crop_rect.is_none() && app.crop.drag.is_none() {
         app.ui.crop_angle = 0.0;
     }
-    let key = app.session.active_index().zip(app.session.active()).map(|(i, st)| (i, st.doc.size.width, st.doc.size.height));
+    let ckey = frame_key(app);
+    let key = ckey.map(|(i, w, h, _)| (i, w, h));
     // Another document (or a resized one) gets its own default frame.
     if app.crop.default_frame && app.crop.frame_for != key && app.crop.drag.is_none() {
         app.ui.crop_rect = None;
+    }
+    // Esc dismissed the frame: Photoshop keeps the border hidden until the next draw, an edit or
+    // another document re-arms it (#10370).
+    if app.crop.drag.is_some() || app.crop.cancelled != ckey {
+        app.crop.cancelled = None;
+    }
+    if app.crop.cancelled.is_some() && app.crop.cancelled == ckey {
+        return;
     }
     if app.ui.crop_rect.is_some() || app.crop.drag.is_some() {
         return;
@@ -420,9 +439,14 @@ pub fn active(app: &PhotocraftApp) -> bool {
 }
 
 /// Cancel the pending crop: the frame, any gesture on it and the default-frame state. With the
-/// Crop tool still picked, [`ensure_frame`] then makes the active document a new default frame.
+/// Crop tool still picked the border stays hidden (Photoshop, #10370) until a draw, an edit,
+/// another document or a tool re-pick re-arms it.
 pub fn cancel(app: &mut PhotocraftApp) {
     crate::crop_mode::upright(app);
+    let active = app.session.active().map(|st| st.doc.id);
+    if app.crop.doc.is_none() || app.crop.doc == active {
+        app.crop.cancelled = frame_key(app);
+    }
     app.ui.crop_rect = None;
     app.ui.crop_angle = 0.0;
     app.crop.drag = None;

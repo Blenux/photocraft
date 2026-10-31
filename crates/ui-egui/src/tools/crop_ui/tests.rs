@@ -163,6 +163,35 @@ fn the_frame_is_edited_from_a_press_until_commit_cancel_or_another_tool() {
 }
 
 #[test]
+fn escape_hides_the_frame_until_the_next_draw() {
+    let mut app = app(SampleType::U8);
+    ensure_frame(&mut app);
+    assert!(app.ui.crop_rect.is_some());
+    // Photoshop hides the border on Esc while the tool stays picked (#10370).
+    cancel(&mut app);
+    ensure_frame(&mut app);
+    assert!(app.ui.crop_rect.is_none());
+    // An edit re-arms it: a new selection gets its own default frame.
+    app.run("select.rect", json!({"x": 20, "y": 10, "width": 80, "height": 40})).unwrap();
+    ensure_frame(&mut app);
+    assert!(app.ui.crop_rect.is_some());
+    cancel(&mut app);
+    ensure_frame(&mut app);
+    assert!(app.ui.crop_rect.is_none());
+    // A draw re-arms it too.
+    drag(&mut app, &[[10.0, 10.0], [60.0, 40.0]], NONE);
+    assert!(app.ui.crop_rect.is_some());
+    // And picking another tool, then Crop again, shows the default frame once more (the
+    // selection is still live, so it frames its bounds).
+    cancel(&mut app);
+    app.ui.tool = Tool::Brush;
+    ensure_frame(&mut app);
+    app.ui.tool = Tool::Crop;
+    ensure_frame(&mut app);
+    assert_eq!(app.ui.crop_rect, Some([20.0, 10.0, 100.0, 50.0]));
+}
+
+#[test]
 fn hit_test_finds_handles_inside_and_outside() {
     let r = [10.0, 10.0, 110.0, 60.0];
     assert_eq!(hit(r, [10.0, 10.0], 4.0), Hit::Handle(-1, -1));
