@@ -416,7 +416,7 @@ pub(crate) fn info(b: &[u8]) -> Result<crate::options::DdsInfo, CodecError> {
     Ok(crate::options::DdsInfo {
         width: p.width,
         height: p.height,
-        levels: p.levels,
+        levels: p.mip_count(),
         alpha: p.encoding.has_alpha(),
         compression: p.encoding.compression(p.alpha_pixels),
         srgb: p.srgb,
